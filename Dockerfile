@@ -38,7 +38,7 @@ USER pilotscope
 WORKDIR ${USER_HOME}
 
 ####### Install PilotScope Core #######
-RUN git -c http.sslVerify=false clone --depth 1 --branch master https://github.com/alibaba/pilotscope.git PilotScopeCore
+RUN git -c http.sslVerify=false clone --depth 1 --branch master https://github.com/SolidCitadel/pilotscope.git PilotScopeCore
 # Install Miniconda
 RUN mkdir -p ${CONDA_DIR} && \
     wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ${CONDA_DIR}/miniconda.sh && \
