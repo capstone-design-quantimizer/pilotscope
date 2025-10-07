@@ -8,12 +8,12 @@ ENV enable_postgresql=${enable_postgresql}
 
 # Set environment variables for PostgreSQL
 ARG USER_HOME=/home/pilotscope
-ENV PG_PATH ${USER_HOME}/pgsql/
-ENV PG_DATA ${USER_HOME}/pg_data
-ENV CONDA_DIR ${USER_HOME}/miniconda3
-ENV LD_LIBRARY_PATH $PG_PATH/lib:$LD_LIBRARY_PATH
-ENV JAVA_HOME ${USER_HOME}/jdk1.8.0_202
-ENV PATH $JAVA_HOME/bin:$PG_PATH/bin:$CONDA_DIR/bin:$PATH
+ENV PG_PATH=${USER_HOME}/pgsql/
+ENV PG_DATA=${USER_HOME}/pg_data
+ENV CONDA_DIR=${USER_HOME}/miniconda3
+ENV LD_LIBRARY_PATH=$PG_PATH/lib:$LD_LIBRARY_PATH
+ENV JAVA_HOME=${USER_HOME}/jdk1.8.0_202
+ENV PATH=$JAVA_HOME/bin:$PG_PATH/bin:$CONDA_DIR/bin:$PATH
 
 # Set non-interactive installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -45,15 +45,16 @@ RUN mkdir -p ${CONDA_DIR} && \
     bash ${CONDA_DIR}/miniconda.sh -b -u -p ${CONDA_DIR} && \
     rm -rf ${CONDA_DIR}/miniconda.sh
 
-RUN conda create --name pilotscope python=3.8
+RUN conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && \
+    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r && \
+    conda create --name pilotscope python=3.8
 
 RUN conda init
 
 # Install libraries
-RUN source ${CONDA_DIR}/bin/activate pilotscope && \
-    cd ./PilotScopeCore && \
-    pip install -e . -i https://mirrors.aliyun.com/pypi/simple/   && \
-    pip install -e '.[dev]' -i https://mirrors.aliyun.com/pypi/simple/
+RUN conda run -n pilotscope bash -c "cd ./PilotScopeCore && \
+    pip install --no-cache-dir -e . -i https://pypi.org/simple/   && \
+    pip install --no-cache-dir -e '.[dev]' -i https://pypi.org/simple/"
 
 ####### Install PostgreSQL #######
 RUN if [ "$enable_postgresql" = "true" ]; then \
