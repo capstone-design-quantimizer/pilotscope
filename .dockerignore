@@ -1,0 +1,80 @@
+# .dockerignore for PilotScope
+# This file tells Docker which files/folders to exclude when building the image
+# This speeds up builds and reduces image size
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Test and development files
+test_example_algorithms/results/
+test_example_algorithms/Results/
+algorithm_examples/results/
+algorithm_examples/ExampleData/
+dev_data/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Documentation
+PilotScopeDocs/
+*.pdf
+!paper/PilotScope.pdf
+!SIGMOD Tutorial-Learned Query Optimizer.pdf
+
+# Data and cache files
+*.db
+*.dat
+*.lck
+*.log
+*.properties
+cacheData/
+.attach_*
+*.ctrl
+
+# Results and outputs
+*.xlsx
+*.png
+!fig/*.png
+!fig/*.jpg
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Docker
+Dockerfile
+Dockerfile.dev
+.dockerignore
+docker-compose.yml
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+algorithm_examples/temp_log_of_pilotscope_console.txt

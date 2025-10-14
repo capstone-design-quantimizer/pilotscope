@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  pilotscope-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      args:
+        enable_postgresql: "true"
+        enable_spark: "false"
+    image: pilotscope:dev
+    container_name: pilotscope-dev
+    
+    # Volume mount for live code updates (NO REBUILD NEEDED!)
+    volumes:
+      - .:/workspace
+    
+    # Set working directory
+    working_dir: /workspace
+    
+    # Keep container running
+    stdin_open: true
+    tty: true
+    
+    # Port mappings (if needed)
+    ports:
+      - "5432:5432"  # PostgreSQL
+    
+    # Environment variables
+    environment:
+      - PYTHONUNBUFFERED=1
+      - CONDA_DEFAULT_ENV=pilotscope
+    
+    # Start with bash (you can activate conda inside)
+    command: /bin/bash
+    
+    # Network
+    networks:
+      - pilotscope-net
+
+  # Optional: Separate PostgreSQL service
+  # postgres:
+  #   image: postgres:13.1
+  #   container_name: pilotscope-postgres
+  #   environment:
+  #     POSTGRES_USER: pilotscope
+  #     POSTGRES_PASSWORD: pilotscope
+  #     POSTGRES_DB: pilotscope
+  #   ports:
+  #     - "5433:5432"
+  #   volumes:
+  #     - postgres-data:/var/lib/postgresql/data
+  #   networks:
+  #     - pilotscope-net
+
+networks:
+  pilotscope-net:
+    driver: bridge
+
+volumes:
+  postgres-data:
