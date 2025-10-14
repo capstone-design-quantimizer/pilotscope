@@ -8,6 +8,24 @@ PilotScope의 데이터셋 시스템은 **3가지 구성 요소**로 이루어�
 2. **데이터셋 클래스** (`.py`): SQL 로딩 및 DB 초기화 로직
 3. **데이터 파일** (optional): 실제 데이터 (dump 파일, CSV 등)
 
+### 🔄 사용 시나리오 2가지
+
+#### 시나리오 A: 데이터베이스 최초 셋업 (1회)
+```python
+# test_pilotscope/test_pg/skip_test_dataset.py 참고
+dataset = StatsTinyDataset(DatabaseEnum.POSTGRESQL, created_db_name="stats_tiny")
+dataset.load_to_db(config)  # 데이터 다운로드 + DB 생성 + 테이블 생성
+```
+
+#### 시나리오 B: SQL만 가져와서 사용 (일반적)
+```python
+# test_example_algorithms/ 참고
+from algorithm_examples.utils import load_test_sql
+sqls = load_test_sql("stats_tiny")  # SQL 쿼리만 읽음
+for sql in sqls:
+    scheduler.execute(sql)  # 이미 존재하는 DB에서 실행
+```
+
 ---
 
 ## Quick Start: SQL 파일만 추가하기 (가장 간단)
@@ -394,6 +412,69 @@ for sql in train_sqls:
 
 ---
 
+## Testing Your Dataset
+
+### Step 6: 데이터셋 로딩 테스트 추가
+
+`test_pilotscope/test_pg/skip_test_dataset.py`에 테스트 메서드를 추가합니다.
+
+```python
+# test_pilotscope/test_pg/skip_test_dataset.py에 추가
+
+from pilotscope.Dataset.MyDatasetDataset import MyDatasetDataset  # import 추가
+
+class TestDataset(unittest.TestCase):
+    # ... 기존 코드 ...
+    
+    def test_load_my_dataset(self):
+        """
+        MyDataset 데이터베이스 초기 셋업 테스트.
+        데이터 다운로드 + DB 생성 + 테이블 생성을 검증합니다.
+        """
+        # 1. 데이터셋 인스턴스 생성
+        ds = MyDatasetDataset(DatabaseEnum.POSTGRESQL, created_db_name="my_database")
+        
+        # 2. 데이터베이스에 로드 (다운로드 + 생성)
+        ds.load_to_db(self.config)
+        
+        # 3. DB Controller 가져오기 (config가 load_to_db에서 수정됨)
+        db_controller: BaseDBController = DBControllerFactory.get_db_controller(self.config)
+        
+        # 4. 테이블 존재 확인
+        for table in ['users', 'orders']:  # 실제 테이블명으로 변경
+            self.assertTrue(db_controller.exist_table(table))
+        
+        # 5. 선택사항: 테스트 후 테이블 삭제 (cleanup)
+        # for table in ['users', 'orders']:
+        #     db_controller.drop_table_if_exist(table)
+    
+    def test_get_my_sql(self):
+        """
+        MyDataset SQL 파일 읽기 테스트.
+        load_to_db 없이 SQL 쿼리만 가져옵니다.
+        """
+        ds = MyDatasetDataset(DatabaseEnum.POSTGRESQL)
+        test_dataset(ds)  # 기존 test_dataset 함수 재사용
+```
+
+### 테스트 실행
+
+```bash
+# Docker에서 실행
+docker-compose exec pilotscope-dev bash
+
+# 특정 테스트만 실행
+python -m unittest test_pilotscope.test_pg.skip_test_dataset.TestDataset.test_load_my_dataset
+
+# SQL 읽기 테스트
+python -m unittest test_pilotscope.test_pg.skip_test_dataset.TestDataset.test_get_my_sql
+
+# 전체 데이터셋 테스트
+python -m unittest test_pilotscope.test_pg.skip_test_dataset
+```
+
+---
+
 ## Summary
 
 ### 🎯 3가지 방법
@@ -410,6 +491,7 @@ for sql in train_sqls:
 - [ ] `{dataset}_train.txt`, `{dataset}_test.txt` 작성
 - [ ] `MyDatasetDataset.py` 클래스 작성
 - [ ] `algorithm_examples/utils.py`에 로딩 로직 추가
+- [ ] `test_pilotscope/test_pg/skip_test_dataset.py`에 `test_load_my_dataset()` 메서드 추가
 - [ ] 테스트 실행 확인
 
 ### 🚀 Quick Template
@@ -425,7 +507,13 @@ echo "select * from users;" > pilotscope/Dataset/MyDataset/my_train.txt
 cp pilotscope/Dataset/StatsDataset.py pilotscope/Dataset/MyDatasetDataset.py
 # sub_dir, train_sql_file 등 수정
 
-# 4. 사용!
+# 4. 테스트 메서드 추가
+# test_pilotscope/test_pg/skip_test_dataset.py에 test_load_my_dataset() 추가
+
+# 5. 테스트 실행
+python -m unittest test_pilotscope.test_pg.skip_test_dataset.TestDataset.test_load_my_dataset
+
+# 6. 알고리즘 테스트에서 사용
 python test_example_algorithms/test_mscn_example.py
 ```
 
