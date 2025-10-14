@@ -134,7 +134,7 @@ RUN if [ "$enable_spark" = "true" ]; then \
 # Switch back to root to start SSH and PostgreSQL
 USER root
 
-# Start SSH service and PostgreSQL, then switch to pilotscope user
+# Start SSH service and PostgreSQL, then keep container running
 CMD service ssh start && \
     su - pilotscope -c "${PG_PATH}/bin/pg_ctl start -D ${PG_DATA} -l /tmp/postgres.log || true" && \
-    su - pilotscope
+    tail -f /dev/null
