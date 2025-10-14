@@ -10,13 +10,13 @@ ENV enable_spark=${enable_spark}
 ENV enable_postgresql=${enable_postgresql}
 
 # Set environment variables for PostgreSQL
-ARG USER_HOME=/home/pilotscope
-ENV PG_PATH=${USER_HOME}/pgsql/
+ENV USER_HOME=/home/pilotscope
+ENV PG_PATH=${USER_HOME}/pgsql
 ENV PG_DATA=${USER_HOME}/pg_data
 ENV CONDA_DIR=${USER_HOME}/miniconda3
-ENV LD_LIBRARY_PATH=$PG_PATH/lib:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=${PG_PATH}/lib:${LD_LIBRARY_PATH}
 ENV JAVA_HOME=${USER_HOME}/jdk1.8.0_202
-ENV PATH=$JAVA_HOME/bin:$PG_PATH/bin:$CONDA_DIR/bin:$PATH
+ENV PATH=${JAVA_HOME}/bin:${PG_PATH}/bin:${CONDA_DIR}/bin:${PATH}
 
 # Set non-interactive installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -38,6 +38,9 @@ RUN git config --global http.postBuffer 524288000
 RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
 
 USER pilotscope
+
+# Set USER_HOME for convenience in RUN commands
+ENV USER_HOME=/home/pilotscope
 WORKDIR ${USER_HOME}
 
 ####### Install PilotScope Core (from local files) #######
@@ -128,4 +131,10 @@ RUN if [ "$enable_spark" = "true" ]; then \
     echo "Spark installation skipped"; \
     fi
 
-CMD ["/bin/bash"]
+# Switch back to root to start SSH and PostgreSQL
+USER root
+
+# Start SSH service and PostgreSQL, then switch to pilotscope user
+CMD service ssh start && \
+    su - pilotscope -c "${PG_PATH}/bin/pg_ctl start -D ${PG_DATA} -l /tmp/postgres.log || true" && \
+    su - pilotscope

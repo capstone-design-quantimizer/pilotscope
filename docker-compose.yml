@@ -13,26 +13,31 @@ services:
     
     # Volume mount for live code updates (NO REBUILD NEEDED!)
     volumes:
-      - .:/workspace
+      - .:/home/pilotscope/workspace
     
-    # Set working directory
-    working_dir: /workspace
+    # Set working directory (where PostgreSQL and Conda are installed)
+    working_dir: /home/pilotscope/workspace
     
     # Keep container running
     stdin_open: true
     tty: true
     
-    # Port mappings (if needed)
+    # Port mappings
     ports:
-      - "5432:5432"  # PostgreSQL
+      - "54323:5432"  # PostgreSQL
+      - "54023:22"    # SSH
+    
+    # Shared memory size (for PostgreSQL)
+    shm_size: 5gb
+    
+    # Capabilities (for debugging with ptrace)
+    cap_add:
+      - SYS_PTRACE
     
     # Environment variables
     environment:
       - PYTHONUNBUFFERED=1
       - CONDA_DEFAULT_ENV=pilotscope
-    
-    # Start with bash (you can activate conda inside)
-    command: /bin/bash
     
     # Network
     networks:
