@@ -81,6 +81,15 @@ class BaseDBController(ABC):
         if self._is_connect():
             self.connection_thread.conn.close()
             self.connection_thread.conn = None
+    
+    def cleanup(self):
+        """
+        Cleanup all database resources including connection pool.
+        This should be called when completely done with the controller.
+        """
+        self._disconnect()
+        if hasattr(self, 'engine') and self.engine is not None:
+            self.engine.dispose()
 
     def _is_connect(self):
         """

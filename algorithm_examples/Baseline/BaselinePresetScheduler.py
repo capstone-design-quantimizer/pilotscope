@@ -21,19 +21,21 @@ def get_baseline_preset_scheduler(config, **kwargs) -> PilotScheduler:
         **kwargs: Ignored (for compatibility with other schedulers)
     
     Returns:
-        PilotScheduler with no AI algorithms
+        PilotScheduler with no AI handlers (for fair comparison)
     """
-    # Create basic scheduler without any AI handlers
+    # Create scheduler without any AI handlers
     scheduler: PilotScheduler = SchedulerFactory.create_scheduler(config)
     
-    # Register minimal data collection
+    # Register data collection for fair comparison with AI algorithms
+    # Collect execution time to measure actual DB query performance
     test_data_save_table = "baseline_data_table"
     scheduler.register_required_data(test_data_save_table, pull_execution_time=True)
     
-    # No AI handlers, no events - just pure database execution
-    # This provides the baseline performance for comparison
+    # No AI handlers - this is the key difference from MSCN/Lero
+    # No events, no card estimation, no query optimization
+    # Just pure database execution through PilotScope infrastructure
     
-    # start
+    # Start the scheduler
     scheduler.init()
     return scheduler
 

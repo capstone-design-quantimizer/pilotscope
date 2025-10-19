@@ -16,6 +16,12 @@
 import sys
 sys.path.append("../")
 
+# Force reload of PilotScheduler module to avoid bytecode cache issues
+if 'pilotscope.PilotScheduler' in sys.modules:
+    del sys.modules['pilotscope.PilotScheduler']
+if 'pilotscope.DBController.BaseDBController' in sys.modules:
+    del sys.modules['pilotscope.DBController.BaseDBController']
+
 import argparse
 import json
 import time
@@ -65,8 +71,8 @@ ALGORITHM_REGISTRY = {
         "default_params": {
             "enable_collection": True,
             "enable_training": True,
-            "num_collection": -1,
-            "num_training": -1,
+            "num_collection": 100,  # 기본값을 100으로 제한 (Lero는 시간이 오래 걸림)
+            "num_training": 500,
             "num_epoch": 100
         }
     },
@@ -100,8 +106,15 @@ def run_single_test(config: PilotConfig, algo_name: str, dataset_name: str,
     print(f"Testing: {algo_name.upper()} on {dataset_name}")
     print("=" * 60)
     
+    # Lero의 경우 타임아웃을 늘림 (Lero는 쿼리당 여러 번 DB 호출)
+    if algo_name == "lero":
+        original_timeout = config.once_request_timeout
+        config.once_request_timeout = 900  # 15분으로 증가
+        print(f"⏱️  Lero 타임아웃 설정: {original_timeout}초 → {config.once_request_timeout}초")
+        print(f"   (Lero는 쿼리당 여러 실행 계획을 생성하므로 시간이 오래 걸립니다)")
+    
     # TimeStatistic 초기화
-    TimeStatistic.reset()
+    TimeStatistic.clear()
     
     # 알고리즘 정보 가져오기
     if algo_name not in ALGORITHM_REGISTRY:
@@ -116,7 +129,18 @@ def run_single_test(config: PilotConfig, algo_name: str, dataset_name: str,
     
     # 스케줄러 생성 (모든 알고리즘 동일한 패턴)
     factory = algo_info["factory"]
-    scheduler_or_interactor = factory(config, **params)
+    scheduler = factory(config, **params)
+    
+    # # 중요: scheduler가 어느 파일에서 로드되었는지 확인
+    # import inspect
+    # print(f"\n🔍 Scheduler module file: {inspect.getfile(scheduler.__class__)}")
+    # print(f"   Scheduler execute method file: {inspect.getfile(scheduler.execute)}")
+    
+    # # execute 메서드의 소스 코드 첫 줄 확인
+    # source_lines = inspect.getsourcelines(scheduler.execute)[0][:20]
+    # print(f"   First 5 lines of execute():")
+    # for line in source_lines:
+    #     print(f"     {line.rstrip()}")
     
     # 테스트 SQL 로드
     print(f"\n📂 Loading test queries from {dataset_name}...")
@@ -131,16 +155,49 @@ def run_single_test(config: PilotConfig, algo_name: str, dataset_name: str,
     print(f"\n🚀 Running {len(test_sqls)} queries...")
     start_time = time.time()
     
-    for i, sql in enumerate(test_sqls):
-        if i % 10 == 0:
-            print(f"   Progress: {i}/{len(test_sqls)} queries")
-        
-        try:
-            TimeStatistic.start(algo_name.capitalize())
-            scheduler_or_interactor.execute(sql)
-            TimeStatistic.end(algo_name.capitalize())
-        except Exception as e:
-            print(f"⚠️  Query {i} failed: {e}")
+    # 실제 DB 쿼리 실행 시간 추적 (AI 모델 추론 시간 제외)
+    total_db_execution_time = 0.0
+    
+    try:
+        for i, sql in enumerate(test_sqls):
+            if i % 10 == 0:
+                print(f"   Progress: {i}/{len(test_sqls)} queries")
+            
+            try:
+                # Python 레벨 시간 측정 (전체 오버헤드 포함)
+                TimeStatistic.start(algo_name.capitalize())
+                result = scheduler.execute(sql)
+                TimeStatistic.end(algo_name.capitalize())
+                
+                # 실제 DB 실행 시간 추출 (pull_execution_time=True로 수집된 데이터)
+                if hasattr(scheduler, 'last_execution_data'):
+                    exec_data = scheduler.last_execution_data
+                    if exec_data is not None and hasattr(exec_data, 'execution_time') and exec_data.execution_time is not None:
+                        # execution_time이 milliseconds인 경우도 있으므로 확인
+                        exec_time = float(exec_data.execution_time)
+                        # DB에 따라 milliseconds로 저장될 수 있음 (PostgreSQL은 보통 milliseconds)
+                        if exec_time > 1000:  # 1000ms 이상이면 밀리초로 간주
+                            exec_time = exec_time / 1000.0
+                        total_db_execution_time += exec_time
+            except Exception as e:
+                print(f"⚠️  Query {i} failed: {e}")
+    finally:
+        # 스케줄러/인터랙터 리소스 정리
+        print(f"\n🧹 Cleaning up resources for {algo_name}...")
+        if hasattr(scheduler, 'data_interactor'):
+            try:
+                # Reset data_interactor to remove all registered anchors
+                scheduler.data_interactor.reset()
+                print(f"   ✓ data_interactor reset")
+            except Exception as cleanup_err:
+                print(f"   ⚠️  Warning: Failed to reset data_interactor: {cleanup_err}")
+        if hasattr(scheduler, 'db_controller'):
+            try:
+                # Cleanup DB controller connections
+                scheduler.db_controller.cleanup()
+                print(f"   ✓ db_controller cleanup")
+            except Exception as cleanup_err:
+                print(f"   ⚠️  Warning: Failed to cleanup db_controller: {cleanup_err}")
     
     end_time = time.time()
     elapsed = end_time - start_time
@@ -149,21 +206,29 @@ def run_single_test(config: PilotConfig, algo_name: str, dataset_name: str,
     print(f"\n💾 Saving results...")
     name_2_value = TimeStatistic.get_sum_data()
     
+    # 순수 DB 실행 시간 정보 출력
+    print(f"\n⏱️  Timing breakdown:")
+    print(f"   Total wall time: {elapsed:.3f}s (Python 레벨, 모든 오버헤드 포함)")
+    if total_db_execution_time > 0:
+        print(f"   DB execution time: {total_db_execution_time:.3f}s (순수 쿼리 실행 시간)")
+        print(f"   Overhead: {elapsed - total_db_execution_time:.3f}s (AI 추론 + 데이터 수집)")
+    else:
+        print(f"   DB execution time: N/A (execution_time not collected)")
+    
     result_file = save_test_result(algo_name, dataset_name, extra_info={
         "params": params,
         "num_queries": len(test_sqls),
-        "wall_time": elapsed
+        "wall_time": elapsed,
+        "db_execution_time": total_db_execution_time,
+        "overhead_time": elapsed - total_db_execution_time if total_db_execution_time > 0 else 0
     })
     
-    # 시각화
-    img_path = get_time_statistic_img_path(algo_name, dataset_name)
-    Drawer.draw_bar(name_2_value, img_path, is_rotation=False)
     
     # 모델 메타데이터 업데이트 (AI 알고리즘인 경우)
-    if algo_name != "baseline" and hasattr(scheduler_or_interactor, 'pilot_model'):
+    if algo_name != "baseline" and hasattr(scheduler, 'pilot_model'):
         from pilotscope.ModelRegistry import ModelRegistry
         
-        model = scheduler_or_interactor.pilot_model
+        model = scheduler.pilot_model
         
         # 성능 메트릭 계산
         performance = {
@@ -186,7 +251,6 @@ def run_single_test(config: PilotConfig, algo_name: str, dataset_name: str,
     
     print(f"\n✅ Test completed in {elapsed:.2f}s")
     print(f"   Result: {result_file}")
-    print(f"   Chart:  img/{img_path}.png")
     
     return {
         "algorithm": algo_name,
@@ -220,18 +284,30 @@ def run_multiple_tests(config: PilotConfig, algorithms: List[str],
             # 알고리즘별 파라미터 가져오기
             params = algo_params.get(algo, {}) if algo_params else {}
             
+            scheduler = None
             try:
                 result = run_single_test(config, algo, dataset, params)
                 if result:
                     results.append(result)
             except Exception as e:
                 print(f"\n❌ Test failed for {algo} on {dataset}: {e}")
+                import traceback
+                traceback.print_exc()
             finally:
-                # 리소스 정리
+                # 리소스 정리 - 더 철저하게
+                print(f"\n🧹 Cleaning up resources for {algo} on {dataset}...")
                 try:
                     pilotscope_exit()
-                except:
-                    pass
+                except Exception as e:
+                    print(f"⚠️  Error during cleanup: {e}")
+                
+                # 강제로 가비지 컬렉션 실행
+                import gc
+                gc.collect()
+                
+                # 짧은 대기 시간 (DB 연결 완전히 닫히도록)
+                import time
+                time.sleep(2)
     
     return results
 
@@ -388,6 +464,8 @@ Examples:
     parser.add_argument('--db-port', help='Database port')
     parser.add_argument('--db-user', help='Database user')
     parser.add_argument('--db-pwd', help='Database password')
+    parser.add_argument('--timeout', type=int, 
+                       help='Request timeout in seconds (default: 600, recommend 900+ for Lero)')
     
     args = parser.parse_args()
     
@@ -412,6 +490,10 @@ Examples:
         config.db_user = args.db_user
     if args.db_pwd:
         config.db_user_pwd = args.db_pwd
+    if args.timeout:
+        config.once_request_timeout = args.timeout
+        config.sql_execution_timeout = args.timeout
+        print(f"⏱️  타임아웃 설정: {args.timeout}초")
     
     # 알고리즘 파라미터 설정
     algo_params = {}

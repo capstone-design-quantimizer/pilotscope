@@ -242,7 +242,7 @@ def load_test_results(result_files):
     return results
 
 
-def compare_algorithms(result_files, metric='total_time', output_path=None):
+def compare_algorithms(result_files, metric='total_time', output_path=None, use_db_time=True):
     """
     Compare multiple algorithm test results and generate a comparison chart.
     
@@ -250,6 +250,7 @@ def compare_algorithms(result_files, metric='total_time', output_path=None):
         result_files: List of JSON file paths to compare
         metric: Which metric to compare ('total_time', 'average_time', 'query_count')
         output_path: Optional path to save the comparison chart (without extension)
+        use_db_time: If True, use db_execution_time for fair comparison (default: True)
     
     Example:
         compare_algorithms([
@@ -263,6 +264,14 @@ def compare_algorithms(result_files, metric='total_time', output_path=None):
     # Extract the specified metric from each result
     comparison_data = {}
     for algo_name, data in results.items():
+        # 순수 DB 실행 시간 사용 (AI 추론 시간 제외)
+        if use_db_time and 'extra_info' in data and 'db_execution_time' in data['extra_info']:
+            db_time = data['extra_info']['db_execution_time']
+            if db_time > 0:
+                comparison_data[algo_name] = db_time
+                continue
+        
+        # Fallback: 기존 방식 (TimeStatistic에서 가져온 시간)
         if metric in data['metrics']:
             metric_values = data['metrics'][metric]
             # If it's a dict, get the first value (usually there's only one key)
@@ -278,17 +287,19 @@ def compare_algorithms(result_files, metric='total_time', output_path=None):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_path = f"results/comparison_{metric}_{timestamp}"
     
+    time_label = "DB Execution Time" if use_db_time else metric.replace('_', ' ').title()
+    
     Drawer.draw_bar(
         comparison_data,
         output_path,
         x_title="Algorithms",
-        y_title=f"{metric.replace('_', ' ').title()} (s)",
+        y_title=f"{time_label} (s)",
         is_rotation=True
     )
     
     print(f"\n📊 Comparison chart saved: {output_path}.png")
     print(f"\n{'='*60}")
-    print(f"Comparison Results ({metric}):")
+    print(f"Comparison Results ({time_label}):")
     print(f"{'='*60}")
     for algo, value in sorted(comparison_data.items(), key=lambda x: x[1]):
         print(f"  {algo:15s}: {value:10.4f}s")
