@@ -71,7 +71,9 @@ def _input_feature_dim_path(base):
 def qerror_loss(preds, targets):
     qerror = []
     for i in range(len(targets)):
-        if (preds[i] > targets[i]).cpu().data.numpy()[0]:
+        # GPU/CPU 모두 처리
+        pred_val = (preds[i] > targets[i]).cpu().data.numpy()[0] if CUDA else (preds[i] > targets[i]).data.numpy()[0]
+        if pred_val:
             qerror.append(preds[i] / targets[i])
         else:
             qerror.append(targets[i] / preds[i])
@@ -168,7 +170,8 @@ class MscnModel():
             outputs = self._net(samples, predicates, joins, sample_masks, predicate_masks, join_masks)
             t_total += time.time() - t
             for i in range(outputs.data.shape[0]):
-                preds.append(outputs.data[i])
+                # GPU 텐서를 CPU로 복사 후 추가
+                preds.append(outputs.data[i].cpu() if CUDA else outputs.data[i])
         preds_test_unnorm = self._feature_generator.unnormalize_labels(preds)
         return preds, preds_test_unnorm, t_total
         

@@ -12,11 +12,24 @@ from feature import SampleEntity
 from tcnn.module import ConvTree, ActivationTreeWrap, LayerNormTree, DynamicPoolingTree
 from tcnn.util import prepare_trees
 from tqdm import tqdm
+
+# GPU 설정: 실제 사용 가능한 GPU만 감지
 CUDA = torch.cuda.is_available()
-GPU_LIST = [0, 1, 2, 3, 4, 5, 6, 7]
+if CUDA:
+    GPU_COUNT = torch.cuda.device_count()
+    GPU_LIST = list(range(GPU_COUNT))
+    print(f"✅ {GPU_COUNT}개의 GPU 감지됨: {GPU_LIST}")
+    if GPU_COUNT == 1:
+        print(f"   💡 Single GPU 모드: DataParallel 사용하지만 오버헤드 최소화")
+else:
+    GPU_LIST = []
+    print("⚠️  GPU를 사용할 수 없습니다. CPU 모드로 실행합니다.")
 
 torch.set_default_tensor_type(torch.DoubleTensor)
 device = torch.device("cuda:0" if CUDA else "cpu")
+
+# Helper function: DataParallel 사용 여부 결정
+USE_DATA_PARALLEL = CUDA and len(GPU_LIST) > 0
 
 
 def _nn_path(base):
@@ -108,11 +121,10 @@ class LeroModel():
 
         self._net = LeroNet(self._input_feature_dim)
         self._net.eval()
-        if CUDA:
+        if USE_DATA_PARALLEL:
             self._net.cuda(device)
             self._net.load_state_dict(torch.load(_nn_path(path)))
-            self._net = torch.nn.DataParallel(
-                self._net, device_ids=GPU_LIST)
+            self._net = torch.nn.DataParallel(self._net, device_ids=GPU_LIST)
         else:
             self._net.load_state_dict(torch.load(
                 _nn_path(path), map_location=torch.device('cpu')))
@@ -123,7 +135,8 @@ class LeroModel():
     def save(self, path):
         os.makedirs(path, exist_ok=True)
 
-        if CUDA:
+        # DataParallel 사용 시에만 module 사용
+        if USE_DATA_PARALLEL:
             torch.save(self._net.module.state_dict(), _nn_path(path))
         else:
             torch.save(self._net.state_dict(), _nn_path(path))
@@ -157,16 +170,16 @@ class LeroModel():
 
             self._net = LeroNet(input_feature_dim)
             self._input_feature_dim = input_feature_dim
-            if CUDA:
+            if USE_DATA_PARALLEL:
                 self._net = self._net.cuda(device)
-                self._net = torch.nn.DataParallel(
-                    self._net, device_ids=GPU_LIST)
+                self._net = torch.nn.DataParallel(self._net, device_ids=GPU_LIST)
                 self._net.cuda(device)
 
+        # Optimizer 설정: DataParallel 사용 시 module.parameters() 사용
+        # 주의: Optimizer는 DataParallel로 감싸지 않음!
         optimizer = None
-        if CUDA:
+        if USE_DATA_PARALLEL:
             optimizer = torch.optim.Adam(self._net.module.parameters())
-            optimizer = nn.DataParallel(optimizer, device_ids=GPU_LIST)
         else:
             optimizer = torch.optim.Adam(self._net.parameters())
 
@@ -179,8 +192,9 @@ class LeroModel():
                 if CUDA:
                     y = y.cuda(device)
 
+                # DataParallel 사용 시에는 module 사용
                 tree = None
-                if CUDA:
+                if USE_DATA_PARALLEL:
                     tree = self._net.module.build_trees(x)
                 else:
                     tree = self._net.build_trees(x)
@@ -189,14 +203,10 @@ class LeroModel():
                 loss = loss_fn(y_pred, y)
                 loss_accum += loss.item()
 
-                if CUDA:
-                    optimizer.module.zero_grad()
-                    loss.backward()
-                    optimizer.module.step()
-                else:
-                    optimizer.zero_grad()
-                    loss.backward()
-                    optimizer.step()
+                # Optimizer는 항상 직접 사용 (DataParallel로 감싸지 않음)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
 
             loss_accum /= len(dataset)
             losses.append(loss_accum)
@@ -211,8 +221,9 @@ class LeroModel():
         if not isinstance(x, list):
             x = [x]
 
+        # DataParallel 사용 시에는 module 사용
         tree = None
-        if CUDA:
+        if USE_DATA_PARALLEL:
             tree = self._net.module.build_trees(x)
         else:
             tree = self._net.build_trees(x)
@@ -241,10 +252,9 @@ class LeroModelPairWise(LeroModel):
 
             self._net = LeroNet(input_feature_dim)
             self._input_feature_dim = input_feature_dim
-            if CUDA:
+            if USE_DATA_PARALLEL:
                 self._net = self._net.cuda(device)
-                self._net = torch.nn.DataParallel(
-                    self._net, device_ids=GPU_LIST)
+                self._net = torch.nn.DataParallel(self._net, device_ids=GPU_LIST)
                 self._net.cuda(device)
 
         pairs = []
@@ -252,7 +262,8 @@ class LeroModelPairWise(LeroModel):
             pairs.append((X1[i], X2[i], 1.0 if Y1[i] >= Y2[i] else 0.0))
 
         batch_size = 64
-        if CUDA:
+        if USE_DATA_PARALLEL and len(GPU_LIST) > 1:
+            # Multi-GPU: 배치 크기 증가
             batch_size = batch_size * len(GPU_LIST)
 
         dataset = DataLoader(pairs,
@@ -260,12 +271,8 @@ class LeroModelPairWise(LeroModel):
                              shuffle=True,
                              collate_fn=collate_pairwise_fn)
 
-        optimizer = None
-        if CUDA:
-            optimizer = torch.optim.Adam(self._net.parameters())
-            optimizer = nn.DataParallel(optimizer, device_ids=GPU_LIST)
-        else:
-            optimizer = torch.optim.Adam(self._net.parameters())
+        # Optimizer 설정: 항상 일관되게 생성 (DataParallel 사용 X)
+        optimizer = torch.optim.Adam(self._net.parameters())
 
         bce_loss_fn = torch.nn.BCELoss()
 
@@ -276,8 +283,9 @@ class LeroModelPairWise(LeroModel):
             loss_accum = 0
             for x1, x2, label in tqdm(dataset):
 
+                # DataParallel 사용 시에는 module 사용
                 tree_x1, tree_x2 = None, None
-                if CUDA:
+                if USE_DATA_PARALLEL:
                     tree_x1 = self._net.module.build_trees(x1)
                     tree_x2 = self._net.module.build_trees(x2)
                 else:
@@ -297,14 +305,10 @@ class LeroModelPairWise(LeroModel):
                 loss = bce_loss_fn(prob_y, label_y)
                 loss_accum += loss.item()
 
-                if CUDA:
-                    optimizer.module.zero_grad()
-                    loss.backward()
-                    optimizer.module.step()
-                else:
-                    optimizer.zero_grad()
-                    loss.backward()
-                    optimizer.step()
+                # Optimizer는 항상 직접 사용 (DataParallel로 감싸지 않음)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
 
             loss_accum /= len(dataset)
             losses.append(loss_accum)

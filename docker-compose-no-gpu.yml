@@ -1,5 +1,8 @@
 version: '3.8'
 
+# GPU 없는 환경용 Docker Compose 설정
+# 사용법: docker-compose -f docker-compose-no-gpu.yml up -d
+
 services:
   pilotscope-dev:
     build:
@@ -14,6 +17,7 @@ services:
     # Volume mount for live code updates (NO REBUILD NEEDED!)
     volumes:
       - .:/home/pilotscope/workspace
+      - postgres-data:/home/pilotscope/pg_data  # PostgreSQL 데이터 영구 저장
     
     # Set working directory (where PostgreSQL and Conda are installed)
     working_dir: /home/pilotscope/workspace
@@ -38,17 +42,15 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - CONDA_DEFAULT_ENV=pilotscope
-      # GPU 관련 환경 변수
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      # PyTorch 성능 최적화
+      # PyTorch 성능 최적화 (CPU only)
       - OMP_NUM_THREADS=8
       - MKL_NUM_THREADS=8
+      - TORCH_NUM_THREADS=8
       # PostgreSQL 성능
       - POSTGRES_SHARED_BUFFERS=2GB
       - POSTGRES_WORK_MEM=128MB
     
-    # 리소스 제한 및 GPU 설정
+    # 리소스 제한 (GPU 없음)
     deploy:
       resources:
         limits:
@@ -57,30 +59,10 @@ services:
         reservations:
           cpus: '4'  # 최소 4 CPU 코어 예약
           memory: 8G  # 최소 8GB 메모리 예약
-          # GPU 설정 (NVIDIA GPU가 있는 경우)
-          devices:
-            - driver: nvidia
-              count: all  # 모든 GPU 사용 (또는 count: 1로 GPU 1개만)
-              capabilities: [gpu]
     
     # Network
     networks:
       - pilotscope-net
-
-  # Optional: Separate PostgreSQL service
-  # postgres:
-  #   image: postgres:13.1
-  #   container_name: pilotscope-postgres
-  #   environment:
-  #     POSTGRES_USER: pilotscope
-  #     POSTGRES_PASSWORD: pilotscope
-  #     POSTGRES_DB: pilotscope
-  #   ports:
-  #     - "5433:5432"
-  #   volumes:
-  #     - postgres-data:/var/lib/postgresql/data
-  #   networks:
-  #     - pilotscope-net
 
 networks:
   pilotscope-net:
@@ -88,3 +70,4 @@ networks:
 
 volumes:
   postgres-data:
+
