@@ -1,0 +1,63 @@
+{
+  "description": "운영 데이터 기반 최적화 실험 - 여러 알고리즘 비교",
+  
+  "db_config": {
+    "db": "production_db",
+    "db_host": "localhost",
+    "db_port": "5432",
+    "db_user": "postgres",
+    "db_user_pwd": "postgres"
+  },
+  
+  "experiments": [
+    {
+      "name": "baseline_production",
+      "algorithm": "baseline",
+      "dataset": "production",
+      "params": {}
+    },
+    {
+      "name": "mscn_production_default",
+      "algorithm": "mscn",
+      "dataset": "production",
+      "params": {
+        "enable_collection": true,
+        "enable_training": true,
+        "num_collection": -1,
+        "num_training": -1,
+        "num_epoch": 100
+      }
+    },
+    {
+      "name": "mscn_production_fast",
+      "algorithm": "mscn",
+      "dataset": "production",
+      "params": {
+        "enable_collection": true,
+        "enable_training": true,
+        "num_collection": 500,
+        "num_training": 500,
+        "num_epoch": 50
+      }
+    },
+    {
+      "name": "lero_production_default",
+      "algorithm": "lero",
+      "dataset": "production",
+      "params": {
+        "enable_collection": true,
+        "enable_training": true,
+        "num_collection": -1,
+        "num_training": -1,
+        "num_epoch": 50
+      }
+    }
+  ],
+  
+  "comparison": {
+    "enabled": true,
+    "metrics": ["total_time", "average_time"],
+    "output_dir": "results/production_comparison"
+  }
+}
+
