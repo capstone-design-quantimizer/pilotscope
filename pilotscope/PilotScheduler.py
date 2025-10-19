@@ -25,6 +25,7 @@ class PilotScheduler:
         self.events = []
         self.user_tasks: List[BasePushHandler] = []
         self.data_interactor = PilotDataInteractor(self.config)
+        self.last_execution_data = None  # Initialize to track last query execution data
 
     def init(self):
         """
@@ -46,11 +47,17 @@ class PilotScheduler:
         :param sql: a sql to be executed
         :return: the related records of the sql
         """
+        # Ensure last_execution_data attribute exists (for compatibility)
+        if not hasattr(self, 'last_execution_data'):
+            self.last_execution_data = None
+        
         data_interactor = self.data_interactor
 
-        # add recordPullAnchor
-        record_handler = RecordPullHandler(self.config)
-        data_interactor._add_anchor(record_handler.anchor_name, record_handler)
+        # add recordPullAnchor (only if not already added)
+        from pilotscope.Anchor.AnchorEnum import AnchorEnum
+        if AnchorEnum.RECORD_PULL_ANCHOR not in data_interactor._anchor_to_handlers:
+            record_handler = RecordPullHandler(self.config)
+            data_interactor._add_anchor(record_handler.anchor_name, record_handler)
 
         # add all replace anchors from user
         data_interactor._add_anchors(self.user_tasks)
@@ -61,6 +68,17 @@ class PilotScheduler:
             replace_handle._update_injected_data(sql)
 
         result = data_interactor.execute(sql, is_reset=False)
+
+        # Store last execution data for access to execution_time
+        self.last_execution_data = result
+        
+        # Debug: Check if execution_time is in result
+        if result is not None and hasattr(result, '__dict__'):
+            import os
+            if os.environ.get('DEBUG_EXECUTION_TIME') == '1':
+                print(f"[PilotScheduler] result attributes: {result.__dict__.keys()}")
+                if hasattr(result, 'execution_time'):
+                    print(f"[PilotScheduler] execution_time = {result.execution_time}")
 
         if result is not None:
             self._post_process(result)
