@@ -14,7 +14,7 @@ from algorithm_examples.Lero.LeroParadigmCardAnchorHandler import LeroCardPushHa
 from algorithm_examples.Lero.LeroPilotModel import LeroPilotModel
 
 
-def get_lero_preset_scheduler(config, enable_collection, enable_training, num_collection = -1, num_training = -1, num_epoch = 100) -> PilotScheduler:
+def get_lero_preset_scheduler(config, enable_collection, enable_training, num_collection = -1, num_training = -1, num_epoch = 100, load_model_id=None) -> PilotScheduler:
     if type(enable_collection) == str:
         enable_collection = eval(enable_collection)
     if type(enable_training) == str:
@@ -34,8 +34,38 @@ def get_lero_preset_scheduler(config, enable_collection, enable_training, num_co
     if enable_collection: # if enable_collection, drop old data and collect new data. otherwise use old data to train.
         data_manager.remove_table_and_tracker(pretraining_data_table)
 
-    lero_pilot_model: PilotModel = LeroPilotModel(model_name)
-    lero_pilot_model.load_model()
+    # Model loading logic
+    if load_model_id:
+        # Load specific model by ID
+        print(f"📂 Loading specific model: {load_model_id}")
+        lero_pilot_model: PilotModel = LeroPilotModel.load_model(load_model_id, "lero")
+    elif not enable_training:
+        # If not training, try to load best model
+        from pilotscope.ModelRegistry import ModelRegistry
+        registry = ModelRegistry()
+        best = registry.get_best_model("lero", test_dataset=config.db)
+        if best:
+            print(f"📊 Loading best model for {config.db}: {best['model_id']}")
+            lero_pilot_model = LeroPilotModel.load_model(best['model_id'], "lero")
+        else:
+            print("⚠️  No trained models found, creating new model")
+            lero_pilot_model: PilotModel = LeroPilotModel(model_name)
+            lero_pilot_model._load_model_impl()
+    else:
+        # Create new model for training
+        lero_pilot_model: PilotModel = LeroPilotModel(model_name)
+        lero_pilot_model._load_model_impl()
+        
+        # Set training metadata
+        hyperparams = {
+            "num_epoch": num_epoch,
+            "num_training": num_training,
+            "num_collection": num_collection,
+            "enable_collection": enable_collection,
+            "enable_training": enable_training
+        }
+        lero_pilot_model.set_training_info(config.db, hyperparams)
+    
     lero_handler = LeroCardPushHandler(lero_pilot_model, config)
 
     # core
@@ -49,6 +79,9 @@ def get_lero_preset_scheduler(config, enable_collection, enable_training, num_co
                                                   num_training = num_training, num_epoch = num_epoch)
     scheduler.register_events([pretraining_event])
 
+    # Attach model to scheduler for later access
+    scheduler.pilot_model = lero_pilot_model
+    
     # start
     scheduler.init()
     return scheduler
