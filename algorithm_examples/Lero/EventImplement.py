@@ -93,13 +93,26 @@ class LeroPretrainingModelEvent(PretrainingModelEvent):
 
     def custom_model_training(self, bind_pilot_model, db_controller: BaseDBController,
                               data_manager: DataManager):
-        data: DataFrame = data_manager.read_all(self.data_saving_table)
-        if self.num_training > 0:
-            data = data[:self.num_training]
-        print(f"Train lero on {data.shape[0]} plans")
-        plans1, plans2 = extract_plan_pairs(data)
-        lero_model = training_pairwise_pilot_score(bind_pilot_model, plans1, plans2, self.num_epoch)
-        return lero_model
+        try:
+            data: DataFrame = data_manager.read_all(self.data_saving_table)
+            if self.num_training > 0:
+                data = data[:self.num_training]
+            print(f"Train lero on {data.shape[0]} plans")
+            plans1, plans2 = extract_plan_pairs(data)
+            lero_model = training_pairwise_pilot_score(bind_pilot_model, plans1, plans2, self.num_epoch)
+            
+            # 학습 성공 확인 - LeroModelPairWise는 _net 속성을 사용
+            if lero_model is None or not hasattr(lero_model, '_net') or lero_model._net is None:
+                print("❌ Lero 학습 실패: 모델이 제대로 초기화되지 않았습니다.")
+                return bind_pilot_model  # 기존 모델 반환
+                
+            return lero_model
+        except Exception as e:
+            print(f"❌ Lero 학습 중 오류 발생: {e}")
+            import traceback
+            traceback.print_exc()
+            print(f"⚠️  기존 모델을 유지합니다.")
+            return bind_pilot_model  # 기존 모델 반환
 
 
 class LeroPeriodicModelUpdateEvent(PeriodicModelUpdateEvent):

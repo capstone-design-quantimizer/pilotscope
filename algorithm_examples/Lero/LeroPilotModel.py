@@ -41,6 +41,15 @@ class LeroPilotModel(EnhancedPilotModel):
 
     def _save_model_impl(self):
         """Save Lero model"""
+        # 모델이 제대로 초기화되었는지 확인
+        if self.model is None:
+            print("⚠️  Warning: Cannot save - model is None")
+            return
+        
+        if not hasattr(self.model, '_net') or self.model._net is None:
+            print("⚠️  Warning: Cannot save - model._net is None (model not trained yet)")
+            return
+        
         self.model.save(self.model_path)
 
     def _load_model_impl(self):

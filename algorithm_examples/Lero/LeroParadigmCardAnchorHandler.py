@@ -19,6 +19,17 @@ class LeroCardPushHandler(CardPushHandler):
 
     def predict(self, plans):
         leroModel: LeroModelPairWise = self.model.model
+        
+        # Check if model is properly initialized
+        if leroModel is None:
+            raise RuntimeError("Lero model is not initialized. Please train or load a model first.")
+        
+        if not hasattr(leroModel, '_feature_generator') or leroModel._feature_generator is None:
+            raise RuntimeError("Lero model feature_generator is not initialized. The model needs to be trained first.")
+        
+        if not hasattr(leroModel, '_net') or leroModel._net is None:
+            raise RuntimeError("Lero model neural network is not initialized. The model needs to be trained first.")
+        
         feature_generator = leroModel._feature_generator
         x, _ = feature_generator.transform(plans)
         scores = leroModel.predict(x)
