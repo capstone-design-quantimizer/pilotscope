@@ -14,9 +14,13 @@ services:
     # Volume mount for live code updates (NO REBUILD NEEDED!)
     volumes:
       - .:/home/pilotscope/workspace
+      - postgres-data:/home/pilotscope/pg_data  # PostgreSQL 데이터 영구 저장
     
     # Set working directory (where PostgreSQL and Conda are installed)
     working_dir: /home/pilotscope/workspace
+    
+    # Use custom entrypoint for dev setup
+    entrypoint: ["/home/pilotscope/workspace/docker-entrypoint.sh"]
     
     # Keep container running
     stdin_open: true

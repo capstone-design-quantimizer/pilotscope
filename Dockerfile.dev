@@ -44,8 +44,8 @@ ENV USER_HOME=/home/pilotscope
 WORKDIR ${USER_HOME}
 
 ####### Install PilotScope Core (from local files) #######
-# Copy local files instead of cloning from GitHub
-COPY --chown=pilotscope:pilotscope . ${USER_HOME}/PilotScopeCore
+# NOTE: In dev mode, we use bind mount at /home/pilotscope/workspace
+# So we don't install from PilotScopeCore here. It will be installed at runtime from workspace.
 
 # Install Miniconda
 RUN mkdir -p ${CONDA_DIR} && \
@@ -59,10 +59,10 @@ RUN conda tos accept --override-channels --channel https://repo.anaconda.com/pkg
 
 RUN conda init
 
-# Install libraries
-RUN conda run -n pilotscope bash -c "cd ./PilotScopeCore && \
-    pip install --no-cache-dir -e . -i https://pypi.org/simple/   && \
-    pip install --no-cache-dir -e '.[dev]' -i https://pypi.org/simple/"
+# Install dependencies only (pilotscope package will be installed from workspace at runtime)
+# Copy only requirements.txt to install dependencies
+COPY --chown=pilotscope:pilotscope requirements.txt ${USER_HOME}/
+RUN conda run -n pilotscope bash -c "pip install --no-cache-dir -r ${USER_HOME}/requirements.txt -i https://pypi.org/simple/"
 
 ####### Install PostgreSQL #######
 RUN if [ "$enable_postgresql" = "true" ]; then \
