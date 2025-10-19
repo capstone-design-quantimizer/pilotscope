@@ -14,8 +14,9 @@ class Drawer:
             values.append(sum_list(vs) / len(vs) if hasattr(vs, '__iter__') else vs)
 
         plt.figure(figsize=(6, 4))
-        plt.bar(names, values, width=0.2)  # 调整条形的宽度
-        plt.xlim(-0.5, 0.5)
+        plt.bar(names, values, width=0.4)
+        # x축 범위를 데이터 개수에 맞게 동적 설정
+        plt.xlim(-0.5, len(names) - 0.5)
 
         # 设置x轴和y轴标签
         plt.xlabel(x_title)
