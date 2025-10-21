@@ -30,12 +30,14 @@ RUN apt-get update && apt-get install -y sudo wget git bzip2 vim openssh-server 
 RUN  echo 'root:root' | chpasswd && \
     useradd -m -s /bin/bash pilotscope && \
     echo "pilotscope:pilotscope" | chpasswd && \
-    usermod -aG sudo pilotscope
+    usermod -aG sudo pilotscope && \
+    echo "pilotscope ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
 RUN git config --global http.postBuffer 524288000
 
 # Set ssh
-RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
+    mkdir -p /run/sshd
 
 USER pilotscope
 
