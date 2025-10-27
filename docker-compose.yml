@@ -30,6 +30,7 @@ services:
     ports:
       - "54323:5432"  # PostgreSQL
       - "54023:22"    # SSH
+      - "5000:5000"   # MLflow UI
     
     # Shared memory size (for PostgreSQL) - 더 크게 설정
     shm_size: 8gb

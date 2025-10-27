@@ -105,22 +105,22 @@ class MscnModel():
         with open(_input_feature_dim_path(path), "wb") as f:
             joblib.dump(self._input_feature_dim, f)
             
-    def fit(self, tokens, labels, schema, hid_units = 256, num_epochs = 100, batch_size = 2048):
-        
+    def fit(self, tokens, labels, schema, hid_units = 256, num_epochs = 100, batch_size = 2048, mlflow_tracker=None):
+
         self._feature_generator=Feature()
         print(schema)
         train_data = self._feature_generator.fit(tokens, labels, schema)
         train_data_loader = DataLoader(train_data, batch_size=batch_size)
-        
+
         self._input_feature_dim = (*self._feature_generator.feature_dim, hid_units)
         self._net = SetConv(*self._input_feature_dim)
         self._net = self._net.float()
         optimizer = torch.optim.Adam(self._net.parameters(), lr=0.001)
-        
+
         if CUDA:
             self._net.cuda()
         self._net.train()
-        
+
         start_time = time.time()
         for epoch in range(num_epochs):
             loss_total = 0.
@@ -145,8 +145,24 @@ class MscnModel():
                 loss_total += loss.item()
                 loss.backward()
                 optimizer.step()
-            print("Epoch {}, loss: {}".format(epoch, loss_total / len(train_data_loader)))
-        print("training time:", time.time() - start_time, "batch size:", batch_size)
+
+            avg_loss = loss_total / len(train_data_loader)
+            print("Epoch {}, loss: {}".format(epoch, avg_loss))
+
+            # Log to MLflow
+            if mlflow_tracker:
+                mlflow_tracker.log_training_metrics({"train_loss": avg_loss}, step=epoch)
+
+        training_time = time.time() - start_time
+        print("training time:", training_time, "batch size:", batch_size)
+
+        # Log final training metrics
+        if mlflow_tracker:
+            mlflow_tracker.log_training_metrics({
+                "training_time_seconds": training_time,
+                "batch_size": batch_size,
+                "num_training_samples": len(train_data)
+            })
         
     def predict(self, queries):
         data = self._feature_generator.transform(queries)

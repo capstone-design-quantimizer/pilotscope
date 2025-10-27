@@ -37,6 +37,12 @@ class DbConnector:
 
 class IndexPeriodicModelUpdateEvent(PeriodicModelUpdateEvent):
 
+    def __init__(self, config, per_query_count, execute_on_init=False, mlflow_tracker=None):
+        super().__init__(config, per_query_count, None)
+        self.execute_on_init = execute_on_init
+        self.mlflow_tracker = mlflow_tracker
+        self.update_count = 0
+
     def _load_sql(self):
         sqls: list = load_test_sql(self.config.db)
         random.shuffle(sqls)
@@ -57,8 +63,23 @@ class IndexPeriodicModelUpdateEvent(PeriodicModelUpdateEvent):
         connector = DbConnector(PilotDataInteractor(self.config, enable_simulate_index=True))
         algo = ExtendAlgorithm(connector, parameters=parameters)
         print("start to search best indexes")
+
+        import time
+        start_time = time.time()
         indexes = algo.calculate_best_indexes(workload)
+        optimization_time = time.time() - start_time
+
+        # Log to MLflow
+        if self.mlflow_tracker:
+            self.mlflow_tracker.log_training_metrics({
+                "index_optimization_time_seconds": optimization_time,
+                "num_indexes_selected": len(indexes),
+                "num_queries": len(sqls)
+            }, step=self.update_count)
+
         for index in indexes:
             columns = [c.name for c in index.columns]
             db_controller.create_index(PilotIndex(columns, index.table().name, index.index_idx()))
             print("create index {}".format(index))
+
+        self.update_count += 1

@@ -42,6 +42,7 @@ from algorithm_examples.Baseline.BaselinePresetScheduler import get_baseline_pre
 from algorithm_examples.Mscn.MscnPresetScheduler import get_mscn_preset_scheduler
 from algorithm_examples.Lero.LeroPresetScheduler import get_lero_preset_scheduler
 from algorithm_examples.KnobTuning.KnobPresetScheduler import get_knob_preset_scheduler
+from algorithm_examples.Index.IndexPresetScheduler import get_index_preset_scheduler
 
 
 # ============================================================================
@@ -80,6 +81,11 @@ ALGORITHM_REGISTRY = {
         "name": "KnobTuning (Configuration Optimization)",
         "factory": get_knob_preset_scheduler,
         "default_params": {}
+    },
+    "index": {
+        "name": "Index Selection (Extend Algorithm)",
+        "factory": get_index_preset_scheduler,
+        "default_params": {}
     }
 }
 
@@ -88,48 +94,67 @@ ALGORITHM_REGISTRY = {
 # Test Execution
 # ============================================================================
 
-def run_single_test(config: PilotConfig, algo_name: str, dataset_name: str, 
-                   algo_params: Dict = None) -> Dict:
+def run_single_test(config: PilotConfig, algo_name: str, dataset_name: str,
+                   algo_params: Dict = None, use_mlflow: bool = True) -> Dict:
     """
     단일 알고리즘 + 데이터셋 조합 테스트 실행
-    
+
     Args:
         config: PilotConfig 인스턴스
         algo_name: 알고리즘 이름 ('mscn', 'lero', 'baseline' 등)
         dataset_name: 데이터셋 이름 ('stats_tiny', 'production' 등)
         algo_params: 알고리즘별 추가 파라미터
-    
+        use_mlflow: MLflow 사용 여부 (기본값: True)
+
     Returns:
         Dict: 테스트 결과 정보
     """
     print("\n" + "=" * 60)
     print(f"Testing: {algo_name.upper()} on {dataset_name}")
     print("=" * 60)
-    
+
+    # Knob Tuning의 경우 deep control 활성화 (DB 재시작 권한 필요)
+    if algo_name == "knob":
+        from algorithm_examples.ExampleConfig import example_pg_bin, example_pgdata
+        config.enable_deep_control_local(example_pg_bin, example_pgdata)
+        print(f"🔧 Knob Tuning deep control 활성화")
+        print(f"   PostgreSQL bin: {example_pg_bin}")
+        print(f"   PostgreSQL data: {example_pgdata}")
+
     # Lero의 경우 타임아웃을 늘림 (Lero는 쿼리당 여러 번 DB 호출)
     if algo_name == "lero":
         original_timeout = config.once_request_timeout
         config.once_request_timeout = 900  # 15분으로 증가
         print(f"⏱️  Lero 타임아웃 설정: {original_timeout}초 → {config.once_request_timeout}초")
         print(f"   (Lero는 쿼리당 여러 실행 계획을 생성하므로 시간이 오래 걸립니다)")
-    
+
     # TimeStatistic 초기화
     TimeStatistic.clear()
-    
+
     # 알고리즘 정보 가져오기
     if algo_name not in ALGORITHM_REGISTRY:
         raise ValueError(f"Unknown algorithm: {algo_name}")
-    
+
     algo_info = ALGORITHM_REGISTRY[algo_name]
-    
+
     # 파라미터 병합 (default + user provided)
     params = algo_info.get("default_params", {}).copy()
     if algo_params:
         params.update(algo_params)
-    
-    # 스케줄러 생성 (모든 알고리즘 동일한 패턴)
+
+    # Add use_mlflow parameter
+    params['use_mlflow'] = use_mlflow
+
+    # 스케줄러 생성 (MLflow 지원 알고리즘은 (scheduler, tracker) 튜플 반환)
     factory = algo_info["factory"]
-    scheduler = factory(config, **params)
+    result = factory(config, **params)
+
+    # Handle return value (tuple for MLflow-enabled algorithms, scheduler only for others)
+    if isinstance(result, tuple):
+        scheduler, mlflow_tracker = result
+    else:
+        scheduler = result
+        mlflow_tracker = None
     
     # # 중요: scheduler가 어느 파일에서 로드되었는지 확인
     # import inspect
@@ -201,11 +226,11 @@ def run_single_test(config: PilotConfig, algo_name: str, dataset_name: str,
     
     end_time = time.time()
     elapsed = end_time - start_time
-    
+
     # 결과 저장
     print(f"\n💾 Saving results...")
     name_2_value = TimeStatistic.get_sum_data()
-    
+
     # 순수 DB 실행 시간 정보 출력
     print(f"\n⏱️  Timing breakdown:")
     print(f"   Total wall time: {elapsed:.3f}s (Python 레벨, 모든 오버헤드 포함)")
@@ -214,7 +239,39 @@ def run_single_test(config: PilotConfig, algo_name: str, dataset_name: str,
         print(f"   Overhead: {elapsed - total_db_execution_time:.3f}s (AI 추론 + 데이터 수집)")
     else:
         print(f"   DB execution time: N/A (execution_time not collected)")
-    
+
+    # Prepare metrics
+    test_metrics = {
+        "total_time": elapsed,
+        "average_time": elapsed / len(test_sqls) if test_sqls else 0,
+        "query_count": len(test_sqls),
+        "db_execution_time": total_db_execution_time,
+        "overhead_time": elapsed - total_db_execution_time if total_db_execution_time > 0 else 0
+    }
+
+    # Log to MLflow if tracker exists
+    if mlflow_tracker:
+        print(f"📊 Logging test results to MLflow...")
+        mlflow_tracker.log_test_results(test_metrics, test_dataset=dataset_name)
+
+        # Log model artifacts
+        if algo_name != "baseline" and hasattr(scheduler, 'pilot_model'):
+            model = scheduler.pilot_model
+            if hasattr(model, 'model_path') and model.model_path:
+                mlflow_tracker.log_model_metadata(
+                    model.model_path,
+                    model_metadata={
+                        "model_id": model.model_id if hasattr(model, 'model_id') else None
+                    },
+                    algorithm=algo_name
+                )
+                print(f"   ✓ Model artifacts logged to MLflow")
+
+        # End MLflow run
+        mlflow_tracker.end_run(status="FINISHED")
+        print(f"   ✓ MLflow run completed: {mlflow_tracker.run_id}")
+
+    # Save to JSON (for backward compatibility)
     result_file = save_test_result(algo_name, dataset_name, extra_info={
         "params": params,
         "num_queries": len(test_sqls),
@@ -222,36 +279,36 @@ def run_single_test(config: PilotConfig, algo_name: str, dataset_name: str,
         "db_execution_time": total_db_execution_time,
         "overhead_time": elapsed - total_db_execution_time if total_db_execution_time > 0 else 0
     })
-    
-    
-    # 모델 메타데이터 업데이트 (AI 알고리즘인 경우)
+
+
+    # 모델 메타데이터 업데이트 (AI 알고리즘인 경우) - legacy support
     if algo_name != "baseline" and hasattr(scheduler, 'pilot_model'):
         from pilotscope.ModelRegistry import ModelRegistry
-        
+
         model = scheduler.pilot_model
-        
+
         # 성능 메트릭 계산
         performance = {
             "total_time": elapsed,
             "average_time": elapsed / len(test_sqls) if test_sqls else 0,
             "num_queries": len(test_sqls)
         }
-        
+
         # 테스트 결과 추가
         model.add_test_result(dataset_name, len(test_sqls), performance)
-        
+
         # 모델 저장 (메타데이터 업데이트)
         model.save_model()
-        
+
         # 레지스트리에 등록
         registry = ModelRegistry()
         registry.register_model(model.metadata)
-        
+
         print(f"✅ Model metadata saved: {model.model_id}")
-    
+
     print(f"\n✅ Test completed in {elapsed:.2f}s")
     print(f"   Result: {result_file}")
-    
+
     return {
         "algorithm": algo_name,
         "dataset": dataset_name,

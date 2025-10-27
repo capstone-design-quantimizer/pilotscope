@@ -94,10 +94,12 @@ def llamatune(conf):
 
 class KnobPeriodicModelUpdateEvent(PeriodicModelUpdateEvent):
     def __init__(self, config, per_query_count, llamatune_config_file, execute_on_init=True,
-                 optimizer_type="smac"):
+                 optimizer_type="smac", mlflow_tracker=None):
         super().__init__(config, per_query_count, execute_on_init=execute_on_init)
         self.optimizer_type = optimizer_type
         self.llamatune_config_file = llamatune_config_file
+        self.mlflow_tracker = mlflow_tracker
+        self.update_count = 0
 
     def custom_model_update(self, pilot_model: PilotModel, db_controller: BaseDBController,
                             data_manager: DataManager):
@@ -110,6 +112,20 @@ class KnobPeriodicModelUpdateEvent(PeriodicModelUpdateEvent):
             "optimizer": self.optimizer_type
         }
 
+        start_time = time.time()
         exp_state = llamatune(conf)
+        optimization_time = time.time() - start_time
+
+        # Log to MLflow
+        if self.mlflow_tracker:
+            self.mlflow_tracker.log_training_metrics({
+                "knob_optimization_time_seconds": optimization_time,
+                "best_performance": exp_state.best_perf,
+                "num_knobs_tuned": len(exp_state.best_conf),
+                "target_metric": exp_state.target_metric
+            }, step=self.update_count)
+
         db_controller.write_knob_to_file(dict(exp_state.best_conf))
         db_controller.restart()
+
+        self.update_count += 1

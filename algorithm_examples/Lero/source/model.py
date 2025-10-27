@@ -236,7 +236,7 @@ class LeroModelPairWise(LeroModel):
     def __init__(self, feature_generator) -> None:
         super().__init__(feature_generator)
 
-    def fit(self, X1, X2, Y1, Y2, pre_training=False, num_epochs = 100):
+    def fit(self, X1, X2, Y1, Y2, pre_training=False, num_epochs = 100, mlflow_tracker=None):
         assert len(X1) == len(X2) and len(Y1) == len(Y2) and len(X1) == len(Y1)
         if isinstance(Y1, list):
             Y1 = np.array(Y1)
@@ -314,5 +314,19 @@ class LeroModelPairWise(LeroModel):
             losses.append(loss_accum)
 
             print("Epoch", epoch, "/", num_epochs, "training loss:", loss_accum)
-        print("training time:", time() - start_time, "batch size:", batch_size)
+
+            # Log to MLflow
+            if mlflow_tracker:
+                mlflow_tracker.log_training_metrics({"train_loss": loss_accum}, step=epoch)
+
+        training_time = time() - start_time
+        print("training time:", training_time, "batch size:", batch_size)
+
+        # Log final training metrics
+        if mlflow_tracker:
+            mlflow_tracker.log_training_metrics({
+                "training_time_seconds": training_time,
+                "batch_size": batch_size,
+                "num_training_pairs": len(X1)
+            })
         

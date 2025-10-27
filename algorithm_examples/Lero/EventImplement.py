@@ -42,13 +42,15 @@ def extract_plan_pairs(data: DataFrame):
 class LeroPretrainingModelEvent(PretrainingModelEvent):
 
     def __init__(self, config: PilotConfig, bind_pilot_model: PilotModel, data_saving_table, enable_collection=True,
-                 enable_training=True, num_collection = -1, num_training = -1, num_epoch = 100):
+                 enable_training=True, num_collection = -1, num_training = -1, num_epoch = 100,
+                 mlflow_tracker=None):
         super().__init__(config, bind_pilot_model, data_saving_table, enable_collection, enable_training)
         self.sqls = []
         self.pilot_data_interactor = PilotDataInteractor(self.config)
         self.num_collection = num_collection
         self.num_training = num_training
         self.num_epoch = num_epoch
+        self.mlflow_tracker = mlflow_tracker
 
     def load_sql(self):
         self.sqls = load_training_sql(self.config.db)
@@ -99,7 +101,7 @@ class LeroPretrainingModelEvent(PretrainingModelEvent):
                 data = data[:self.num_training]
             print(f"Train lero on {data.shape[0]} plans")
             plans1, plans2 = extract_plan_pairs(data)
-            lero_model = training_pairwise_pilot_score(bind_pilot_model, plans1, plans2, self.num_epoch)
+            lero_model = training_pairwise_pilot_score(bind_pilot_model, plans1, plans2, self.num_epoch, mlflow_tracker=self.mlflow_tracker)
             
             # 학습 성공 확인 - LeroModelPairWise는 _net 속성을 사용
             if lero_model is None or not hasattr(lero_model, '_net') or lero_model._net is None:

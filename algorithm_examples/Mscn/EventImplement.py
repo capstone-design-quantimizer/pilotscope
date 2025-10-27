@@ -15,7 +15,8 @@ from pilotscope.PilotTransData import PilotTransData
 class MscnPretrainingModelEvent(PretrainingModelEvent):
 
     def __init__(self, config: PilotConfig, bind_pilot_model: PilotModel, data_saving_table, enable_collection=True,
-                 enable_training=True, training_data_file=None, num_collection = -1, num_training = -1, num_epoch = 100):
+                 enable_training=True, training_data_file=None, num_collection = -1, num_training = -1, num_epoch = 100,
+                 mlflow_tracker=None):
         super().__init__(config, bind_pilot_model, data_saving_table, enable_collection, enable_training)
         self.sqls = []
         self.config.once_request_timeout = 60
@@ -25,6 +26,7 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
         self.num_collection = num_collection
         self.num_training = num_training
         self.num_epoch = num_epoch
+        self.mlflow_tracker = mlflow_tracker
 
     def iterative_data_collection(self, db_controller: BaseDBController, train_data_manager: DataManager):
         print("start to collect data for MSCN algorithms")
@@ -55,7 +57,7 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
             tokens, labels = load_tokens(self.training_data_file, self.training_data_file + ".token")
             schema = load_schema(self.pilot_data_interactor.db_controller)
             model = MscnModel()
-            model.fit(tokens, labels + 1, schema)
+            model.fit(tokens, labels + 1, schema, mlflow_tracker=self.mlflow_tracker)
         else:
             data: DataFrame = data_manager.read_all(self.data_saving_table)
             if self.num_training > 0:
@@ -65,5 +67,5 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
             schema = load_schema(self.pilot_data_interactor.db_controller)
             model = MscnModel()
             # Mscn can only handler card that is larger than 0, so we add 1 to all cards. In prediction we minus it by 1.
-            model.fit((tables, joins, predicates), data["card"].values + 1, schema, num_epochs = self.num_epoch)
+            model.fit((tables, joins, predicates), data["card"].values + 1, schema, num_epochs = self.num_epoch, mlflow_tracker=self.mlflow_tracker)
         return model
