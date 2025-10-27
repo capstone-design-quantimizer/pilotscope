@@ -43,6 +43,22 @@ echo "Activating conda environment: pilotscope"
 eval "$(/home/pilotscope/miniconda3/bin/conda shell.bash hook)"
 conda activate pilotscope 2>/dev/null || echo "Warning: conda activation failed, but environment should still work"
 
+# Auto-install/update requirements from workspace if they exist
+if [ -f "/home/pilotscope/workspace/requirements.txt" ]; then
+    echo "Checking workspace requirements.txt..."
+    WORKSPACE_REQ="/home/pilotscope/workspace/requirements.txt"
+    IMAGE_REQ="/home/pilotscope/requirements.txt"
+    
+    # Check if requirements have changed or if we need to install missing packages
+    if [ ! -f "$IMAGE_REQ" ] || ! diff -q "$WORKSPACE_REQ" "$IMAGE_REQ" > /dev/null 2>&1; then
+        echo "Requirements differ from image, installing/updating packages..."
+        pip install -r "$WORKSPACE_REQ" --quiet || echo "Warning: some packages failed to install"
+        cp "$WORKSPACE_REQ" "$IMAGE_REQ" 2>/dev/null || true
+    else
+        echo "Requirements up to date."
+    fi
+fi
+
 echo "========================================"
 echo "Environment ready!"
 echo "PostgreSQL: localhost:5432"
