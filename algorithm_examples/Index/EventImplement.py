@@ -77,6 +77,27 @@ class IndexPeriodicModelUpdateEvent(PeriodicModelUpdateEvent):
                 "num_queries": len(sqls)
             }, step=self.update_count)
 
+            # Log index list as artifact (JSON file)
+            import mlflow
+            index_list = []
+            for index in indexes:
+                columns = [c.name for c in index.columns]
+                index_list.append({
+                    "table": index.table().name,
+                    "columns": columns,
+                    "index_name": index.index_idx(),
+                    "estimated_size_bytes": index.estimated_size if hasattr(index, 'estimated_size') else None
+                })
+
+            index_config = {
+                "indexes": index_list,
+                "num_indexes": len(indexes),
+                "optimization_time_seconds": optimization_time,
+                "num_queries_analyzed": len(sqls),
+                "update_iteration": self.update_count
+            }
+            mlflow.log_dict(index_config, f"index_config_iteration_{self.update_count}.json")
+
         for index in indexes:
             columns = [c.name for c in index.columns]
             db_controller.create_index(PilotIndex(columns, index.table().name, index.index_idx()))

@@ -125,6 +125,18 @@ class KnobPeriodicModelUpdateEvent(PeriodicModelUpdateEvent):
                 "target_metric": exp_state.target_metric
             }, step=self.update_count)
 
+            # Log knob configuration as artifact (JSON file)
+            import json
+            import mlflow
+            knob_config = {
+                "best_configuration": dict(exp_state.best_conf),
+                "best_performance": exp_state.best_perf,
+                "target_metric": exp_state.target_metric,
+                "optimization_time_seconds": optimization_time,
+                "update_iteration": self.update_count
+            }
+            mlflow.log_dict(knob_config, f"knob_config_iteration_{self.update_count}.json")
+
         db_controller.write_knob_to_file(dict(exp_state.best_conf))
         db_controller.restart()
 
