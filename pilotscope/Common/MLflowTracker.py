@@ -45,8 +45,32 @@ class MLflowTracker:
         try:
             experiment = mlflow.get_experiment_by_name(experiment_name)
             if experiment is None:
+                # Create new experiment
                 experiment_id = mlflow.create_experiment(experiment_name)
                 logger.info(f"Created new MLflow experiment: {experiment_name} (ID: {experiment_id})")
+            elif experiment.lifecycle_stage == "deleted":
+                # Experiment was deleted - restore or recreate
+                logger.warning(f"Experiment '{experiment_name}' is deleted. Restoring...")
+                try:
+                    # Try to restore
+                    client = mlflow.tracking.MlflowClient()
+                    client.restore_experiment(experiment.experiment_id)
+                    logger.info(f"Restored deleted experiment: {experiment_name}")
+                    experiment_id = experiment.experiment_id
+                except Exception as restore_error:
+                    # If restore fails, permanently delete and recreate
+                    logger.warning(f"Could not restore, recreating: {restore_error}")
+                    try:
+                        client.delete_experiment(experiment.experiment_id)
+                        experiment_id = mlflow.create_experiment(experiment_name)
+                        logger.info(f"Recreated experiment: {experiment_name} (ID: {experiment_id})")
+                    except:
+                        # Last resort: use a new name with timestamp
+                        import time
+                        new_name = f"{experiment_name}_{int(time.time())}"
+                        experiment_id = mlflow.create_experiment(new_name)
+                        logger.info(f"Created new experiment with timestamp: {new_name}")
+                        experiment_name = new_name
             else:
                 experiment_id = experiment.experiment_id
                 logger.info(f"Using existing MLflow experiment: {experiment_name} (ID: {experiment_id})")
@@ -56,20 +80,25 @@ class MLflowTracker:
             logger.warning(f"Failed to set experiment {experiment_name}: {e}")
             # Fallback to default experiment
             mlflow.set_experiment("Default")
+            experiment_name = "Default"
 
         self.experiment_name = experiment_name
         self.active_run = None
         self.run_id = None
         self._enabled = True  # Can be disabled for debugging
+        self._dataset_info = {}  # Store dataset info for test logging
 
-    def start_training(self, algo_name: str, dataset: str, params: Dict) -> Optional[str]:
+    def start_training(self, algo_name: str, dataset: str, params: Dict, db_name: str = None, workload: str = None, num_queries: int = None) -> Optional[str]:
         """
         학습 시작시 호출 - 새로운 MLflow run 생성
 
         Args:
             algo_name: 알고리즘 이름 (e.g., "mscn", "lero")
-            dataset: 데이터셋 이름 (e.g., "stats_tiny", "imdb")
+            dataset: 데이터셋 이름 (e.g., "stats_tiny_custom")
             params: 하이퍼파라미터 dict
+            db_name: 실제 DB 이름 (e.g., "stats_tiny")
+            workload: 워크로드 이름 (e.g., "custom", "default")
+            num_queries: 학습 쿼리 수
 
         Returns:
             run_id: MLflow run ID (나중에 재연결할 때 사용)
@@ -84,6 +113,14 @@ class MLflowTracker:
             self.active_run = mlflow.start_run(run_name=run_name)
             self.run_id = self.active_run.info.run_id
 
+            # Store dataset info for later use
+            self._dataset_info = {
+                "dataset": dataset,
+                "db_name": db_name or dataset,
+                "workload": workload or "default",
+                "num_training_queries": num_queries
+            }
+
             # Log basic parameters
             mlflow.log_params({
                 "algorithm": algo_name,
@@ -91,16 +128,41 @@ class MLflowTracker:
                 **self._flatten_params(params)
             })
 
-            # Log dataset info for MLflow UI
+            # Log dataset info as tags
+            mlflow.set_tags({
+                "dataset.name": dataset,
+                "dataset.db": db_name or dataset,
+                "dataset.workload": workload or "default",
+                "dataset.context": "training"
+            })
+
+            # Log dataset for "Datasets used" column (MLflow 2.3+)
             try:
-                # MLflow 2.x+ dataset tracking
-                dataset_info = mlflow.data.from_dict(
-                    {"name": dataset, "source": f"{algo_name}_training"},
-                    source=f"pilotscope://{dataset}"
-                )
-                mlflow.log_input(dataset_info, context="training")
+                import pandas as pd
+                import warnings
+                # Suppress MLflow's integer column warning (it's just a warning, not an error)
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", message=".*integer column.*")
+                    warnings.filterwarnings("ignore", message=".*UCVolumeDatasetSource.*")
+                    warnings.filterwarnings("ignore", message=".*LocalArtifactDatasetSource.*")
+
+                    # Create metadata DataFrame with workload info
+                    dataset_df = pd.DataFrame({
+                        "dataset": [dataset],
+                        "db": [db_name or dataset],
+                        "workload": [workload or "default"],
+                        "num_queries": [num_queries if num_queries else 0]
+                    })
+                    # Log as MLflow dataset
+                    dataset_source = mlflow.data.from_pandas(
+                        dataset_df,
+                        source=dataset,
+                        name=dataset,
+                        targets=None
+                    )
+                    mlflow.log_input(dataset_source, context="training")
             except Exception as e:
-                logger.debug(f"Could not log dataset (MLflow version may not support it): {e}")
+                logger.debug(f"Could not log dataset to Datasets column: {e}")
 
             # Log system info as tags
             mlflow.set_tags({
@@ -139,7 +201,7 @@ class MLflowTracker:
 
     def log_model_metadata(self, model_path: str, model_metadata: Dict[str, Any] = None, algorithm: str = None):
         """
-        모델 파일과 메타데이터를 MLflow artifact로 저장
+        모델 파일과 메타데이터를 MLflow Model로 저장 (Logged models 컬럼에 표시)
 
         Args:
             model_path: 모델 파일 경로 (기존 저장 방식 유지)
@@ -151,22 +213,55 @@ class MLflowTracker:
 
         try:
             model_path = Path(model_path)
+            model_name = model_metadata.get('model_id', model_path.stem) if model_metadata else model_path.stem
 
-            # Log model file as artifact
+            # Log model file as artifact (legacy)
             if model_path.exists():
-                mlflow.log_artifact(str(model_path), "model")
+                mlflow.log_artifact(str(model_path), "model_files")
                 logger.info(f"Logged model artifact: {model_path}")
 
             # Log metadata JSON if exists
             metadata_path = Path(f"{model_path}.json")
             if metadata_path.exists():
-                mlflow.log_artifact(str(metadata_path), "metadata")
+                mlflow.log_artifact(str(metadata_path), "model_files")
                 logger.info(f"Logged metadata artifact: {metadata_path}")
 
-            # Register model for MLflow UI Model column
+            # Log as MLflow pyfunc model (for "Logged models" column)
             try:
-                model_name = model_metadata.get('model_id', model_path.stem) if model_metadata else model_path.stem
-                # Log as MLflow model (this populates the Model column in UI)
+                # Create a simple Python function wrapper
+                class PilotScopeModelWrapper(mlflow.pyfunc.PythonModel):
+                    """Wrapper for PilotScope models to enable MLflow tracking"""
+
+                    def __init__(self, model_path, metadata):
+                        self.model_path = str(model_path)
+                        self.metadata = metadata or {}
+
+                    def predict(self, context, model_input):
+                        """Placeholder predict method"""
+                        return {"error": "Direct prediction not supported. Load model using PilotScope."}
+
+                # Create wrapper instance
+                wrapper = PilotScopeModelWrapper(model_path, model_metadata)
+
+                # Log as pyfunc model
+                mlflow.pyfunc.log_model(
+                    artifact_path="model",
+                    python_model=wrapper,
+                    artifacts={"model_file": str(model_path)} if model_path.exists() else None,
+                    registered_model_name=None,  # Don't register yet
+                    metadata={
+                        "model_name": model_name,
+                        "algorithm": algorithm or "unknown",
+                        "model_path": str(model_path),
+                        **(model_metadata or {})
+                    }
+                )
+
+                logger.info(f"Logged model to MLflow Models: {model_name}")
+
+            except Exception as e:
+                logger.warning(f"Could not log as MLflow pyfunc model: {e}")
+                # Fallback: log model info as JSON
                 mlflow.log_dict(
                     {
                         "model_name": model_name,
@@ -177,12 +272,9 @@ class MLflowTracker:
                     "model_info.json"
                 )
 
-                # Set model tag for UI
-                mlflow.set_tag("mlflow.model.type", algorithm or "custom")
-                mlflow.set_tag("model_name", model_name)
-
-            except Exception as e:
-                logger.debug(f"Could not register model info: {e}")
+            # Set model tags for UI
+            mlflow.set_tag("mlflow.model.type", algorithm or "custom")
+            mlflow.set_tag("model_name", model_name)
 
             # Log additional metadata as params/tags
             if model_metadata:
@@ -195,13 +287,14 @@ class MLflowTracker:
         except Exception as e:
             logger.error(f"Failed to log model: {e}")
 
-    def log_test_results(self, test_metrics: Dict[str, float], test_dataset: str = None):
+    def log_test_results(self, test_metrics: Dict[str, float], test_dataset: str = None, num_test_queries: int = None):
         """
         테스트 결과 로깅 (같은 run에 추가)
 
         Args:
             test_metrics: 테스트 메트릭 dict
             test_dataset: 테스트 데이터셋 이름 (선택사항)
+            num_test_queries: 테스트 쿼리 수 (선택사항)
         """
         if not self._enabled or self.active_run is None:
             return
@@ -223,6 +316,39 @@ class MLflowTracker:
             }
             if test_dataset:
                 tags["test_dataset"] = test_dataset
+                # Also log as dataset tag for MLflow UI
+                tags["dataset.test.name"] = test_dataset
+
+                # Log test dataset for "Datasets used" column
+                try:
+                    import pandas as pd
+                    import warnings
+                    # Suppress MLflow's integer column warning
+                    with warnings.catch_warnings():
+                        warnings.filterwarnings("ignore", message=".*integer column.*")
+                        warnings.filterwarnings("ignore", message=".*UCVolumeDatasetSource.*")
+                        warnings.filterwarnings("ignore", message=".*LocalArtifactDatasetSource.*")
+
+                        # Use stored dataset info from training
+                        db_name = self._dataset_info.get("db_name", test_dataset)
+                        workload = self._dataset_info.get("workload", "default")
+
+                        dataset_df = pd.DataFrame({
+                            "dataset": [test_dataset],
+                            "db": [db_name],
+                            "workload": [workload],
+                            "num_queries": [num_test_queries if num_test_queries else 0]
+                        })
+                        # Log as MLflow dataset
+                        dataset_source = mlflow.data.from_pandas(
+                            dataset_df,
+                            source=test_dataset,
+                            name=test_dataset,
+                            targets=None
+                        )
+                        mlflow.log_input(dataset_source, context="testing")
+                except Exception as e:
+                    logger.debug(f"Could not log test dataset to Datasets column: {e}")
 
             mlflow.set_tags(tags)
 
@@ -355,3 +481,123 @@ class MLflowTracker:
         except Exception as e:
             logger.error(f"Failed to list runs: {e}")
             return []
+
+    @classmethod
+    def download_model_artifact(cls, run_id: str, dest_dir: str = None) -> Optional[str]:
+        """
+        MLflow run에서 모델 artifact를 다운로드
+
+        Args:
+            run_id: MLflow run ID
+            dest_dir: 저장할 디렉토리 (None이면 임시 디렉토리)
+
+        Returns:
+            다운로드된 모델 파일 경로 또는 None
+        """
+        try:
+            import tempfile
+            import shutil
+
+            # Get artifact URI
+            run = mlflow.get_run(run_id)
+            artifact_uri = run.info.artifact_uri
+
+            # Determine destination
+            if dest_dir is None:
+                dest_dir = tempfile.mkdtemp(prefix="pilotscope_model_")
+            else:
+                os.makedirs(dest_dir, exist_ok=True)
+
+            # Download artifacts from "model_files" directory
+            client = mlflow.tracking.MlflowClient()
+            try:
+                artifacts = client.list_artifacts(run_id, "model_files")
+                if not artifacts:
+                    logger.warning(f"No model_files artifacts found in run {run_id}")
+                    return None
+
+                # Download all artifacts in model_files
+                for artifact in artifacts:
+                    artifact_path = client.download_artifacts(run_id, artifact.path, dest_dir)
+                    logger.info(f"Downloaded artifact: {artifact_path}")
+
+                # Find the main model file (not .json)
+                downloaded_files = list(Path(dest_dir).glob("model_files/*"))
+                model_files = [f for f in downloaded_files if not f.name.endswith('.json')]
+
+                if model_files:
+                    return str(model_files[0])
+                else:
+                    logger.warning("No model file found (only metadata)")
+                    return None
+
+            except Exception as e:
+                logger.warning(f"Could not download from model_files: {e}")
+                # Fallback: try to download from root
+                try:
+                    artifact_path = client.download_artifacts(run_id, "", dest_dir)
+                    return artifact_path
+                except:
+                    return None
+
+        except Exception as e:
+            logger.error(f"Failed to download model artifact: {e}")
+            return None
+
+    def save_model_artifact(self, model_path: str, model_id: str = None,
+                           metadata: Dict = None) -> bool:
+        """
+        현재 run에 모델을 artifact로 저장
+
+        Args:
+            model_path: 저장할 모델 파일 경로
+            model_id: 모델 ID (타임스탬프 기반)
+            metadata: 추가 메타데이터
+
+        Returns:
+            성공 여부
+        """
+        if not self._enabled or self.active_run is None:
+            logger.warning("Cannot save model: no active MLflow run")
+            return False
+
+        try:
+            model_path = Path(model_path)
+
+            # Save model file as artifact
+            if model_path.exists() and model_path.is_file():
+                mlflow.log_artifact(str(model_path), "model_files")
+                logger.info(f"Saved model artifact: {model_path}")
+            elif model_path.exists() and model_path.is_dir():
+                # If it's a directory, log all files in it
+                for file in model_path.iterdir():
+                    if file.is_file():
+                        mlflow.log_artifact(str(file), "model_files")
+                logger.info(f"Saved model directory artifacts: {model_path}")
+            else:
+                logger.warning(f"Model path does not exist: {model_path}")
+                return False
+
+            # Save metadata JSON if exists
+            metadata_path = Path(f"{model_path}.json")
+            if metadata_path.exists():
+                mlflow.log_artifact(str(metadata_path), "model_files")
+                logger.info(f"Saved metadata artifact: {metadata_path}")
+
+            # Log model_id as parameter for easy retrieval
+            if model_id:
+                try:
+                    mlflow.log_param("model_id", model_id)
+                except:
+                    # Parameter might already exist
+                    mlflow.set_tag("model_id", model_id)
+
+            # Log metadata as JSON
+            if metadata:
+                mlflow.log_dict(metadata, "model_metadata.json")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to save model artifact: {e}")
+            return False
