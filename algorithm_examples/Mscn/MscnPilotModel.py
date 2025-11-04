@@ -26,12 +26,12 @@ class MscnPilotModel(EnhancedPilotModel):
         model.save_model()
     """
 
-    def __init__(self, model_name="mscn"):
+    def __init__(self, model_name="mscn", mlflow_tracker=None, save_to_local=False):
         model_save_dir = os.path.join(
             os.path.dirname(__file__),
             "../ExampleData/Mscn/Model"
         )
-        super().__init__(model_name, "mscn", model_save_dir)
+        super().__init__(model_name, "mscn", model_save_dir, mlflow_tracker, save_to_local)
 
     def _save_model_impl(self):
         """Save MSCN model"""

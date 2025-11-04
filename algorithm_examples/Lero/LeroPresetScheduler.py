@@ -15,7 +15,7 @@ from algorithm_examples.Lero.LeroParadigmCardAnchorHandler import LeroCardPushHa
 from algorithm_examples.Lero.LeroPilotModel import LeroPilotModel
 
 
-def get_lero_preset_scheduler(config, enable_collection, enable_training, num_collection = -1, num_training = -1, num_epoch = 100, load_model_id=None, use_mlflow=True) -> tuple:
+def get_lero_preset_scheduler(config, enable_collection, enable_training, num_collection = -1, num_training = -1, num_epoch = 100, load_model_id=None, use_mlflow=True, experiment_name=None, dataset_name=None) -> tuple:
     if type(enable_collection) == str:
         enable_collection = eval(enable_collection)
     if type(enable_training) == str:
@@ -29,7 +29,8 @@ def get_lero_preset_scheduler(config, enable_collection, enable_training, num_co
 
     model_name = "lero_pair"
     test_data_table = "{}_test_data_table".format(model_name)
-    pretraining_data_table = "lero_pretraining_collect_data"
+    # Use dataset_name to separate data for different workloads
+    pretraining_data_table = f"lero_pretraining_{dataset_name if dataset_name else config.db}"
 
     data_manager = DataManager(config)
     if enable_collection: # if enable_collection, drop old data and collect new data. otherwise use old data to train.
@@ -38,7 +39,9 @@ def get_lero_preset_scheduler(config, enable_collection, enable_training, num_co
     # Initialize MLflow tracker
     mlflow_tracker = None
     if use_mlflow and enable_training:
-        mlflow_tracker = MLflowTracker(experiment_name=f"lero_{config.db}")
+        # Use provided experiment name or fallback to default
+        exp_name = experiment_name if experiment_name else f"lero_{config.db}"
+        mlflow_tracker = MLflowTracker(experiment_name=exp_name)
 
         # Start MLflow run for training
         hyperparams = {
@@ -48,10 +51,22 @@ def get_lero_preset_scheduler(config, enable_collection, enable_training, num_co
             "enable_collection": enable_collection,
             "enable_training": enable_training
         }
+        # Extract workload from dataset_name
+        workload = None
+        db_name = config.db
+        if dataset_name and "_" in dataset_name:
+            # e.g., "stats_tiny_custom" -> db="stats_tiny", workload="custom"
+            parts = dataset_name.rsplit("_", 1)
+            if len(parts) == 2 and parts[0] == config.db:
+                workload = parts[1]
+
         mlflow_tracker.start_training(
             algo_name="lero",
-            dataset=config.db,
-            params=hyperparams
+            dataset=dataset_name if dataset_name else config.db,
+            params=hyperparams,
+            db_name=db_name,
+            workload=workload,
+            num_queries=num_training if num_training > 0 else None
         )
 
     # Model loading logic
@@ -62,8 +77,9 @@ def get_lero_preset_scheduler(config, enable_collection, enable_training, num_co
     elif not enable_training:
         # If not training, try to load best model from MLflow first
         if use_mlflow:
+            exp_name = experiment_name if experiment_name else f"lero_{config.db}"
             best_run = MLflowTracker.get_best_run(
-                experiment_name=f"lero_{config.db}",
+                experiment_name=exp_name,
                 metric="test_total_time",
                 ascending=True
             )
@@ -75,11 +91,11 @@ def get_lero_preset_scheduler(config, enable_collection, enable_training, num_co
                     lero_pilot_model = LeroPilotModel.load_model(model_id, "lero")
                 else:
                     print("⚠️  No model_id in MLflow run, creating new model")
-                    lero_pilot_model: PilotModel = LeroPilotModel(model_name)
+                    lero_pilot_model: PilotModel = LeroPilotModel(model_name, mlflow_tracker=mlflow_tracker, save_to_local=False)
                     lero_pilot_model._load_model_impl()
             else:
                 print("⚠️  No trained models found in MLflow, creating new model")
-                lero_pilot_model: PilotModel = LeroPilotModel(model_name)
+                lero_pilot_model: PilotModel = LeroPilotModel(model_name, mlflow_tracker=mlflow_tracker, save_to_local=False)
                 lero_pilot_model._load_model_impl()
         else:
             # Fallback to old registry method
@@ -91,13 +107,13 @@ def get_lero_preset_scheduler(config, enable_collection, enable_training, num_co
                 lero_pilot_model = LeroPilotModel.load_model(best['model_id'], "lero")
             else:
                 print("⚠️  No trained models found, creating new model")
-                lero_pilot_model: PilotModel = LeroPilotModel(model_name)
+                lero_pilot_model: PilotModel = LeroPilotModel(model_name, mlflow_tracker=mlflow_tracker, save_to_local=False)
                 lero_pilot_model._load_model_impl()
     else:
         # Create new model for training
-        lero_pilot_model: PilotModel = LeroPilotModel(model_name)
+        lero_pilot_model: PilotModel = LeroPilotModel(model_name, mlflow_tracker=mlflow_tracker, save_to_local=False)
         lero_pilot_model._load_model_impl()
-        
+
         # Set training metadata
         hyperparams = {
             "num_epoch": num_epoch,

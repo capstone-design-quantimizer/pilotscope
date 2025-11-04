@@ -11,6 +11,7 @@ from pilotscope.DBController.BaseDBController import BaseDBController
 from pilotscope.Dataset.ImdbDataset import ImdbDataset
 from pilotscope.Dataset.StatsDataset import StatsDataset
 from pilotscope.Dataset.StatsTinyDataset import StatsTinyDataset
+from pilotscope.Dataset.StatsTinyCustomDataset import StatsTinyCustomDataset
 from pilotscope.Dataset.TpcdsDataset import TpcdsDataset
 from pilotscope.PilotEnum import DatabaseEnum
 
@@ -21,7 +22,9 @@ def get_path(sql_file):
 
 
 def load_training_sql(db):
-    if "stats_tiny" == db.lower():
+    if "stats_tiny_custom" == db.lower():
+        return StatsTinyCustomDataset(DatabaseEnum.POSTGRESQL).read_train_sql()
+    elif "stats_tiny" == db.lower():
         return StatsTinyDataset(DatabaseEnum.POSTGRESQL).read_train_sql()
     elif "stats" in db.lower():
         return StatsDataset(DatabaseEnum.POSTGRESQL).read_train_sql()
@@ -34,7 +37,9 @@ def load_training_sql(db):
 
 
 def load_test_sql(db):
-    if "stats_tiny" == db.lower():
+    if "stats_tiny_custom" == db.lower():
+        return StatsTinyCustomDataset(DatabaseEnum.POSTGRESQL).read_test_sql()
+    elif "stats_tiny" == db.lower():
         return StatsTinyDataset(DatabaseEnum.POSTGRESQL).read_test_sql()
     elif "stats" in db.lower():
         return StatsDataset(DatabaseEnum.POSTGRESQL).read_test_sql()

@@ -26,12 +26,12 @@ class LeroPilotModel(EnhancedPilotModel):
         model.save_model()
     """
 
-    def __init__(self, model_name="lero"):
+    def __init__(self, model_name="lero", mlflow_tracker=None, save_to_local=False):
         model_save_dir = os.path.join(
             os.path.dirname(__file__),
             "../ExampleData/Lero/Model"
         )
-        super().__init__(model_name, "lero", model_save_dir)
+        super().__init__(model_name, "lero", model_save_dir, mlflow_tracker, save_to_local)
 
     def train(self, data_manager: DataManager):
         print("enter LeroPilotModel.train")

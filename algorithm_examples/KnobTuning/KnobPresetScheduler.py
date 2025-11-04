@@ -8,7 +8,7 @@ from pilotscope.Common.MLflowTracker import MLflowTracker
 from algorithm_examples.KnobTuning.EventImplement import KnobPeriodicModelUpdateEvent
 
 
-def get_knob_preset_scheduler(config: PilotConfig, use_mlflow=True, **kwargs) -> tuple:
+def get_knob_preset_scheduler(config: PilotConfig, use_mlflow=True, experiment_name=None, dataset_name=None, **kwargs) -> tuple:
     # config.db = "stats_tiny"
     config.sql_execution_timeout = 300000
     config.once_request_timeout = 300000
@@ -16,17 +16,31 @@ def get_knob_preset_scheduler(config: PilotConfig, use_mlflow=True, **kwargs) ->
     # Initialize MLflow tracker
     mlflow_tracker = None
     if use_mlflow:
-        mlflow_tracker = MLflowTracker(experiment_name=f"knob_{config.db}")
+        # Use provided experiment name or fallback to default
+        exp_name = experiment_name if experiment_name else f"knob_{config.db}"
+        mlflow_tracker = MLflowTracker(experiment_name=exp_name)
+
+        # Extract workload from dataset_name
+        workload = None
+        db_name = config.db
+        if dataset_name and "_" in dataset_name:
+            # e.g., "stats_tiny_custom" -> db="stats_tiny", workload="custom"
+            parts = dataset_name.rsplit("_", 1)
+            if len(parts) == 2 and parts[0] == config.db:
+                workload = parts[1]
+
         # Start run for knob tuning (iterative optimization)
         mlflow_tracker.start_training(
             algo_name="knob_tuning",
-            dataset=config.db,
+            dataset=dataset_name if dataset_name else config.db,
             params={
                 "algorithm": "llamatune",
                 "optimizer": "smac",
                 "periodic_update": True,
                 "update_interval": 200
-            }
+            },
+            db_name=db_name,
+            workload=workload
         )
 
     # core

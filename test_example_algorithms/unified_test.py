@@ -30,12 +30,9 @@ from typing import Dict, List, Optional
 
 from pilotscope.Common.Util import pilotscope_exit
 from pilotscope.Common.TimeStatistic import TimeStatistic
-from pilotscope.Common.Drawer import Drawer
 from pilotscope.PilotConfig import PilotConfig, PostgreSQLConfig
-from pilotscope.DBInteractor.PilotDataInteractor import PilotDataInteractor
 
-from algorithm_examples.utils import load_test_sql, save_test_result, compare_algorithms
-from algorithm_examples.ExampleConfig import get_time_statistic_img_path
+from algorithm_examples.utils import load_test_sql
 
 # Algorithm Registry
 from algorithm_examples.Baseline.BaselinePresetScheduler import get_baseline_preset_scheduler
@@ -59,10 +56,10 @@ ALGORITHM_REGISTRY = {
         "name": "MSCN (Cardinality Estimation)",
         "factory": get_mscn_preset_scheduler,
         "default_params": {
-            "enable_collection": True,
+            "enable_collection": False,
             "enable_training": True,
-            "num_collection": -1,
-            "num_training": -1,
+            "num_collection": -1,  # 각 SQL를 직접 수행해 (SQL, Cardinality) GT를 먼저 구함
+            "num_training": -1, # collection 중 일부를 활용
             "num_epoch": 100
         }
     },
@@ -70,10 +67,10 @@ ALGORITHM_REGISTRY = {
         "name": "Lero (Learned Optimizer)",
         "factory": get_lero_preset_scheduler,
         "default_params": {
-            "enable_collection": True,
+            "enable_collection": False,
             "enable_training": True,
-            "num_collection": 100,  # 기본값을 100으로 제한 (Lero는 시간이 오래 걸림)
-            "num_training": 500,
+            "num_collection": 100,  # 각 SQL를 여러 cardinality별로 직접 수행해 (SQL, Plans) GT를 먼저 구함
+            "num_training": 500,  # Plan 개수 (training SQL 보다 많음)
             "num_epoch": 100
         }
     },
@@ -94,23 +91,30 @@ ALGORITHM_REGISTRY = {
 # Test Execution
 # ============================================================================
 
-def run_single_test(config: PilotConfig, algo_name: str, dataset_name: str,
-                   algo_params: Dict = None, use_mlflow: bool = True) -> Dict:
+def run_single_test(config: PilotConfig, algo_name: str, db_name: str,
+                   workload_name: str = None, algo_params: Dict = None, use_mlflow: bool = True) -> Dict:
     """
-    단일 알고리즘 + 데이터셋 조합 테스트 실행
+    단일 알고리즘 + 데이터베이스 + 워크로드 조합 테스트 실행
 
     Args:
         config: PilotConfig 인스턴스
         algo_name: 알고리즘 이름 ('mscn', 'lero', 'baseline' 등)
-        dataset_name: 데이터셋 이름 ('stats_tiny', 'production' 등)
+        db_name: 데이터베이스 이름 ('stats_tiny', 'imdb' 등)
+        workload_name: 워크로드 이름 (None이면 db_name과 동일, 'custom'이면 '{db_name}_custom')
         algo_params: 알고리즘별 추가 파라미터
         use_mlflow: MLflow 사용 여부 (기본값: True)
 
     Returns:
         Dict: 테스트 결과 정보
     """
+    # Determine actual workload identifier for loading queries
+    if workload_name is None or workload_name == "default":
+        dataset_name = db_name  # Use default workload
+    else:
+        dataset_name = f"{db_name}_{workload_name}"  # e.g., "stats_tiny_custom"
+
     print("\n" + "=" * 60)
-    print(f"Testing: {algo_name.upper()} on {dataset_name}")
+    print(f"Testing: {algo_name.upper()} on {db_name} (workload: {workload_name or 'default'})")
     print("=" * 60)
 
     # Knob Tuning의 경우 deep control 활성화 (DB 재시작 권한 필요)
@@ -142,8 +146,10 @@ def run_single_test(config: PilotConfig, algo_name: str, dataset_name: str,
     if algo_params:
         params.update(algo_params)
 
-    # Add use_mlflow parameter
+    # Add use_mlflow parameter and dataset info
     params['use_mlflow'] = use_mlflow
+    params['experiment_name'] = f"{algo_name}_{dataset_name}"  # Full dataset name including workload
+    params['dataset_name'] = dataset_name  # For MLflow logging
 
     # 스케줄러 생성 (MLflow 지원 알고리즘은 (scheduler, tracker) 튜플 반환)
     factory = algo_info["factory"]
@@ -155,7 +161,15 @@ def run_single_test(config: PilotConfig, algo_name: str, dataset_name: str,
     else:
         scheduler = result
         mlflow_tracker = None
-    
+
+    # Backup initial DB state for all algorithms (enables safe cleanup later)
+    # Even if algorithm doesn't modify config/indexes, backup is harmless
+    try:
+        if hasattr(scheduler.db_controller, 'backup_config'):
+            scheduler.db_controller.backup_config()
+    except Exception:
+        pass  # Deep control not enabled, skip
+
     # # 중요: scheduler가 어느 파일에서 로드되었는지 확인
     # import inspect
     # print(f"\n🔍 Scheduler module file: {inspect.getfile(scheduler.__class__)}")
@@ -167,6 +181,34 @@ def run_single_test(config: PilotConfig, algo_name: str, dataset_name: str,
     # for line in source_lines:
     #     print(f"     {line.rstrip()}")
     
+    # Check if we should skip testing (when only collecting data)
+    if algo_params and not algo_params.get('enable_training', True):
+        print(f"\n⏭️  Skipping test phase (--no-training specified)")
+        print(f"   ✅ Data collection completed!")
+        print(f"\n💡 Next step: Train with collected data:")
+        print(f"   python unified_test.py --algo {algo_name} --db {db_name}", end="")
+        if workload_name:
+            print(f" --workload {workload_name}", end="")
+        print(f" \\\n       --no-collection --training-size 500 --epochs 100")
+
+        # End MLflow run if exists
+        run_id = None
+        if mlflow_tracker:
+            run_id = mlflow_tracker.run_id
+            mlflow_tracker.end_run(status="FINISHED")
+            print(f"\n   ✓ MLflow run completed: {run_id}")
+
+        return {
+            "algorithm": algo_name,
+            "database": db_name,
+            "workload": workload_name or "default",
+            "dataset": dataset_name,
+            "elapsed_time": 0,
+            "params": algo_params,
+            "mlflow_run_id": run_id,
+            "skipped": "no_training"
+        }
+
     # 테스트 SQL 로드
     print(f"\n📂 Loading test queries from {dataset_name}...")
     try:
@@ -175,7 +217,7 @@ def run_single_test(config: PilotConfig, algo_name: str, dataset_name: str,
     except Exception as e:
         print(f"❌ Failed to load test queries: {e}")
         return None
-    
+
     # 쿼리 실행
     print(f"\n🚀 Running {len(test_sqls)} queries...")
     start_time = time.time()
@@ -252,120 +294,110 @@ def run_single_test(config: PilotConfig, algo_name: str, dataset_name: str,
     # Log to MLflow if tracker exists
     if mlflow_tracker:
         print(f"📊 Logging test results to MLflow...")
-        mlflow_tracker.log_test_results(test_metrics, test_dataset=dataset_name)
+        mlflow_tracker.log_test_results(test_metrics, test_dataset=dataset_name, num_test_queries=len(test_sqls))
 
-        # Log model artifacts
+        # Update model with test results (save_model() will handle MLflow upload)
         if algo_name != "baseline" and hasattr(scheduler, 'pilot_model'):
             model = scheduler.pilot_model
-            if hasattr(model, 'model_path') and model.model_path:
-                mlflow_tracker.log_model_metadata(
-                    model.model_path,
-                    model_metadata={
-                        "model_id": model.model_id if hasattr(model, 'model_id') else None
-                    },
-                    algorithm=algo_name
-                )
-                print(f"   ✓ Model artifacts logged to MLflow")
+            if hasattr(model, 'add_test_result'):
+                performance = {
+                    "total_time": elapsed,
+                    "average_time": elapsed / len(test_sqls) if test_sqls else 0,
+                    "num_queries": len(test_sqls),
+                    "db_execution_time": total_db_execution_time
+                }
+                model.add_test_result(dataset_name, len(test_sqls), performance)
+                # save_model() now automatically uploads to MLflow via mlflow_tracker
+                model.save_model()
+                print(f"   ✓ Model updated with test results")
 
-        # End MLflow run
+        # End MLflow run (save run_id before it's cleared)
+        run_id = mlflow_tracker.run_id
         mlflow_tracker.end_run(status="FINISHED")
-        print(f"   ✓ MLflow run completed: {mlflow_tracker.run_id}")
-
-    # Save to JSON (for backward compatibility)
-    result_file = save_test_result(algo_name, dataset_name, extra_info={
-        "params": params,
-        "num_queries": len(test_sqls),
-        "wall_time": elapsed,
-        "db_execution_time": total_db_execution_time,
-        "overhead_time": elapsed - total_db_execution_time if total_db_execution_time > 0 else 0
-    })
-
-
-    # 모델 메타데이터 업데이트 (AI 알고리즘인 경우) - legacy support
-    if algo_name != "baseline" and hasattr(scheduler, 'pilot_model'):
-        from pilotscope.ModelRegistry import ModelRegistry
-
-        model = scheduler.pilot_model
-
-        # 성능 메트릭 계산
-        performance = {
-            "total_time": elapsed,
-            "average_time": elapsed / len(test_sqls) if test_sqls else 0,
-            "num_queries": len(test_sqls)
-        }
-
-        # 테스트 결과 추가
-        model.add_test_result(dataset_name, len(test_sqls), performance)
-
-        # 모델 저장 (메타데이터 업데이트)
-        model.save_model()
-
-        # 레지스트리에 등록
-        registry = ModelRegistry()
-        registry.register_model(model.metadata)
-
-        print(f"✅ Model metadata saved: {model.model_id}")
+        print(f"   ✓ MLflow run completed: {run_id}")
 
     print(f"\n✅ Test completed in {elapsed:.2f}s")
-    print(f"   Result: {result_file}")
+
+    # Cleanup: Always restore DB to initial state
+    print(f"\n🧹 Restoring database to initial state...")
+    try:
+        # Drop all user-created indexes (safe even if none were created)
+        scheduler.db_controller.drop_all_indexes()
+        print("   ✓ Indexes cleaned")
+    except Exception as e:
+        # Expected for algorithms without deep control or if no indexes exist
+        pass
+
+    try:
+        # Recover original config and restart (safe because we backed up earlier)
+        if hasattr(scheduler.db_controller, 'recover_config'):
+            scheduler.db_controller.recover_config()
+            scheduler.db_controller.restart()
+            print("   ✓ PostgreSQL configuration restored")
+    except Exception as e:
+        # Expected if deep control not enabled
+        pass
 
     return {
         "algorithm": algo_name,
-        "dataset": dataset_name,
-        "result_file": str(result_file),
+        "database": db_name,
+        "workload": workload_name or "default",
+        "dataset": dataset_name,  # For backward compatibility
         "elapsed_time": elapsed,
-        "params": params
+        "params": params,
+        "mlflow_run_id": mlflow_tracker.run_id if mlflow_tracker else None
     }
 
 
-def run_multiple_tests(config: PilotConfig, algorithms: List[str], 
-                      datasets: List[str], algo_params: Dict = None) -> List[Dict]:
+def run_multiple_tests(config: PilotConfig, algorithms: List[str],
+                      databases: List[str], workload: str = None, algo_params: Dict = None) -> List[Dict]:
     """
-    여러 알고리즘 + 데이터셋 조합을 순차적으로 테스트
-    
+    여러 알고리즘 + 데이터베이스 + 워크로드 조합을 순차적으로 테스트
+
     Args:
         config: PilotConfig 인스턴스
         algorithms: 테스트할 알고리즘 리스트
-        datasets: 테스트할 데이터셋 리스트
+        databases: 테스트할 데이터베이스 리스트
+        workload: 워크로드 이름 (None이면 default, 'custom' 등)
         algo_params: 알고리즘별 파라미터 (algo_name을 키로 하는 dict)
-    
+
     Returns:
         List[Dict]: 각 테스트의 결과 정보
     """
     results = []
-    
-    for dataset in datasets:
-        config.db = dataset
-        
+
+    for db_name in databases:
+        config.db = db_name  # Set actual database name
+
         for algo in algorithms:
             # 알고리즘별 파라미터 가져오기
             params = algo_params.get(algo, {}) if algo_params else {}
-            
-            scheduler = None
+
             try:
-                result = run_single_test(config, algo, dataset, params)
+                result = run_single_test(config, algo, db_name, workload, params)
                 if result:
                     results.append(result)
             except Exception as e:
-                print(f"\n❌ Test failed for {algo} on {dataset}: {e}")
+                print(f"\n❌ Test failed for {algo} on {db_name} (workload: {workload}): {e}")
                 import traceback
                 traceback.print_exc()
             finally:
                 # 리소스 정리 - 더 철저하게
-                print(f"\n🧹 Cleaning up resources for {algo} on {dataset}...")
+                print(f"\n🧹 Cleaning up resources for {algo} on {db_name}...")
+
                 try:
                     pilotscope_exit()
                 except Exception as e:
-                    print(f"⚠️  Error during cleanup: {e}")
-                
+                    print(f"⚠️  Error during pilotscope_exit: {e}")
+
                 # 강제로 가비지 컬렉션 실행
                 import gc
                 gc.collect()
-                
+
                 # 짧은 대기 시간 (DB 연결 완전히 닫히도록)
                 import time
                 time.sleep(2)
-    
+
     return results
 
 
@@ -375,33 +407,34 @@ def run_multiple_tests(config: PilotConfig, algorithms: List[str],
 
 def compare_results(results: List[Dict], output_dir: str = "results"):
     """
-    여러 테스트 결과를 비교
-    
+    여러 테스트 결과를 비교하고 출력
+
     Args:
         results: run_multiple_tests()의 반환값
-        output_dir: 비교 차트 저장 디렉토리
     """
     if len(results) < 2:
         print("\n⚠️  Need at least 2 results to compare")
         return
-    
+
     print("\n" + "=" * 60)
     print("Comparison Summary")
     print("=" * 60)
-    
-    # 결과 파일 리스트 추출
-    result_files = [r["result_file"] for r in results]
-    
-    # 비교 실행
-    output_path = f"{output_dir}/comparison_all"
-    compare_algorithms(result_files, metric='total_time', output_path=output_path)
-    
+
     # 요약 출력
     print("\n📊 Test Results:")
     print("-" * 60)
     for result in sorted(results, key=lambda x: x["elapsed_time"]):
-        print(f"  {result['algorithm']:10s} on {result['dataset']:15s}: {result['elapsed_time']:8.2f}s")
+        db = result.get('database', result.get('dataset', 'unknown'))
+        workload = result.get('workload', 'default')
+        print(f"  {result['algorithm']:10s} on {db:15s} (workload: {workload:10s}): {result['elapsed_time']:8.2f}s")
     print("-" * 60)
+
+    # MLflow에 기록된 경우 안내
+    mlflow_runs = [r for r in results if r.get('mlflow_run_id')]
+    if mlflow_runs:
+        print(f"\n💡 {len(mlflow_runs)} runs logged to MLflow. View with:")
+        print(f"   mlflow ui --backend-store-uri mlruns/")
+        print(f"   Then open: http://localhost:5000")
 
 
 # ============================================================================
@@ -446,13 +479,14 @@ def run_from_config_file(config_file: str):
     for exp in experiments:
         exp_name = exp.get("name", "unnamed")
         algo = exp.get("algorithm")
-        dataset = exp.get("dataset")
+        db_name = exp.get("database", exp.get("dataset"))  # Support both 'database' and legacy 'dataset'
+        workload = exp.get("workload", None)
         params = exp.get("params", {})
-        
+
         print(f"\n🧪 Running experiment: {exp_name}")
-        config.db = dataset
-        
-        result = run_single_test(config, algo, dataset, params)
+        config.db = db_name
+
+        result = run_single_test(config, algo, db_name, workload, params)
         if result:
             result["experiment_name"] = exp_name
             results.append(result)
@@ -462,8 +496,7 @@ def run_from_config_file(config_file: str):
     # 비교
     comparison_config = config_data.get("comparison", {})
     if comparison_config.get("enabled", True):
-        compare_results(results, 
-                       output_dir=comparison_config.get("output_dir", "results"))
+        compare_results(results)
     
     return results
 
@@ -478,12 +511,15 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Test multiple algorithms on multiple datasets
-  python unified_test.py --algo mscn lero baseline --db stats_tiny production --compare
-  
-  # Test with custom parameters
-  python unified_test.py --algo mscn --db production --epochs 50 --training-size 500
-  
+  # Test multiple algorithms on multiple databases
+  python unified_test.py --algo mscn lero baseline --db stats_tiny imdb --compare
+
+  # Test with custom workload on stats_tiny database
+  python unified_test.py --algo mscn --db stats_tiny --workload custom --epochs 100
+
+  # Test with default workload
+  python unified_test.py --algo mscn --db stats_tiny --epochs 50 --training-size 500
+
   # Use JSON config file
   python unified_test.py --config test_configs/production_experiment.json
         """
@@ -493,11 +529,13 @@ Examples:
     parser.add_argument('--config', help='JSON config file path')
     
     # Algorithm & Dataset selection
-    parser.add_argument('--algo', nargs='+', 
+    parser.add_argument('--algo', nargs='+',
                        choices=list(ALGORITHM_REGISTRY.keys()),
                        help='Algorithms to test')
-    parser.add_argument('--db', nargs='+', 
-                       help='Datasets to test (e.g., stats_tiny, imdb, production)')
+    parser.add_argument('--db', nargs='+',
+                       help='Databases to test (e.g., stats_tiny, imdb)')
+    parser.add_argument('--workload',
+                       help='Workload to use (default: same as db, custom: use custom workload)')
     
     # Algorithm parameters
     parser.add_argument('--epochs', type=int, help='Number of training epochs')
@@ -513,8 +551,6 @@ Examples:
     # Output options
     parser.add_argument('--compare', action='store_true',
                        help='Compare results after all tests')
-    parser.add_argument('--output-dir', default='results',
-                       help='Output directory for results (default: results)')
     
     # DB Config
     parser.add_argument('--db-host', help='Database host')
@@ -556,27 +592,29 @@ Examples:
     algo_params = {}
     for algo in args.algo:
         params = {}
-        
+
         if args.epochs is not None:
             params['num_epoch'] = args.epochs
         if args.training_size is not None:
             params['num_training'] = args.training_size
         if args.collection_size is not None:
             params['num_collection'] = args.collection_size
+            # Automatically enable collection when collection size is specified
+            params['enable_collection'] = True
         if args.no_collection:
             params['enable_collection'] = False
         if args.no_training:
             params['enable_training'] = False
-        
+
         algo_params[algo] = params
     
     # 테스트 실행
     try:
-        results = run_multiple_tests(config, args.algo, args.db, algo_params)
+        results = run_multiple_tests(config, args.algo, args.db, args.workload, algo_params)
         
         # 비교
         if args.compare and len(results) > 1:
-            compare_results(results, args.output_dir)
+            compare_results(results)
         
         print("\n" + "=" * 60)
         print("✨ All tests completed!")

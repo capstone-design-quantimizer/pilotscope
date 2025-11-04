@@ -96,10 +96,35 @@ class LeroPretrainingModelEvent(PretrainingModelEvent):
     def custom_model_training(self, bind_pilot_model, db_controller: BaseDBController,
                               data_manager: DataManager):
         try:
-            data: DataFrame = data_manager.read_all(self.data_saving_table)
+            # Check if data exists
+            try:
+                data: DataFrame = data_manager.read_all(self.data_saving_table)
+            except Exception as e:
+                print(f"\n❌ Error: No collected data found in table '{self.data_saving_table}'")
+                print(f"   Please run data collection first:")
+                print(f"   python unified_test.py --algo lero --db {self.config.db} \\")
+                print(f"       --collection-size 100 --no-training")
+                print(f"\n   Error details: {e}")
+                raise RuntimeError(f"No training data available. Run collection first.") from e
+
+            # Check if data is empty
+            if data.shape[0] == 0:
+                print(f"\n❌ Error: Table '{self.data_saving_table}' exists but contains no data")
+                print(f"   Please collect data first:")
+                print(f"   python unified_test.py --algo lero --db {self.config.db} \\")
+                print(f"       --collection-size 100 --no-training")
+                raise RuntimeError(f"No training data available (0 rows in table).")
+
+            print(f"📂 Loaded {data.shape[0]} collected plans from '{self.data_saving_table}'")
+
             if self.num_training > 0:
+                if self.num_training > data.shape[0]:
+                    print(f"⚠️  Warning: Requested training size ({self.num_training}) > available data ({data.shape[0]})")
+                    print(f"   Using all {data.shape[0]} available plans")
+                    self.num_training = data.shape[0]
                 data = data[:self.num_training]
-            print(f"Train lero on {data.shape[0]} plans")
+
+            print(f"🎓 Training Lero on {data.shape[0]} plans")
             plans1, plans2 = extract_plan_pairs(data)
             lero_model = training_pairwise_pilot_score(bind_pilot_model, plans1, plans2, self.num_epoch, mlflow_tracker=self.mlflow_tracker)
             

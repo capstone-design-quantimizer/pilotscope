@@ -59,10 +59,35 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
             model = MscnModel()
             model.fit(tokens, labels + 1, schema, mlflow_tracker=self.mlflow_tracker)
         else:
-            data: DataFrame = data_manager.read_all(self.data_saving_table)
+            # Check if data exists
+            try:
+                data: DataFrame = data_manager.read_all(self.data_saving_table)
+            except Exception as e:
+                print(f"\n❌ Error: No collected data found in table '{self.data_saving_table}'")
+                print(f"   Please run data collection first:")
+                print(f"   python unified_test.py --algo mscn --db {self.config.db} \\")
+                print(f"       --collection-size -1 --no-training")
+                print(f"\n   Error details: {e}")
+                raise RuntimeError(f"No training data available. Run collection first.") from e
+
+            # Check if data is empty
+            if data.shape[0] == 0:
+                print(f"\n❌ Error: Table '{self.data_saving_table}' exists but contains no data")
+                print(f"   Please collect data first:")
+                print(f"   python unified_test.py --algo mscn --db {self.config.db} \\")
+                print(f"       --collection-size -1 --no-training")
+                raise RuntimeError(f"No training data available (0 rows in table).")
+
+            print(f"📂 Loaded {data.shape[0]} collected sql-card pairs from '{self.data_saving_table}'")
+
             if self.num_training > 0:
+                if self.num_training > data.shape[0]:
+                    print(f"⚠️  Warning: Requested training size ({self.num_training}) > available data ({data.shape[0]})")
+                    print(f"   Using all {data.shape[0]} available pairs")
+                    self.num_training = data.shape[0]
                 data = data[:self.num_training]
-            print(f"Train mscn on {data.shape[0]} sql-card pairs")
+
+            print(f"🎓 Training MSCN on {data.shape[0]} sql-card pairs")
             tables, joins, predicates = parse_queries(data["query"].values)
             schema = load_schema(self.pilot_data_interactor.db_controller)
             model = MscnModel()
