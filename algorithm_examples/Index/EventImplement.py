@@ -37,14 +37,15 @@ class DbConnector:
 
 class IndexPeriodicModelUpdateEvent(PeriodicModelUpdateEvent):
 
-    def __init__(self, config, per_query_count, execute_on_init=False, mlflow_tracker=None):
+    def __init__(self, config, per_query_count, execute_on_init=False, mlflow_tracker=None, dataset_name=None):
         super().__init__(config, per_query_count, None)
         self.execute_on_init = execute_on_init
         self.mlflow_tracker = mlflow_tracker
         self.update_count = 0
+        self.dataset_name = dataset_name if dataset_name else config.db
 
     def _load_sql(self):
-        sqls: list = load_test_sql(self.config.db)
+        sqls: list = load_test_sql(self.dataset_name)
         random.shuffle(sqls)
         if "imdb" in self.config.db:
             sqls = sqls[0:len(sqls) // 2]

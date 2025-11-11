@@ -101,9 +101,9 @@ def get_lero_preset_scheduler(config, enable_collection, enable_training, num_co
             # Fallback to old registry method
             from pilotscope.ModelRegistry import ModelRegistry
             registry = ModelRegistry()
-            best = registry.get_best_model("lero", test_dataset=config.db)
+            best = registry.get_best_model("lero", test_dataset=dataset_name if dataset_name else config.db)
             if best:
-                print(f"📊 Loading best model for {config.db}: {best['model_id']}")
+                print(f"📊 Loading best model for {dataset_name if dataset_name else config.db}: {best['model_id']}")
                 lero_pilot_model = LeroPilotModel.load_model(best['model_id'], "lero")
             else:
                 print("⚠️  No trained models found, creating new model")
@@ -122,7 +122,7 @@ def get_lero_preset_scheduler(config, enable_collection, enable_training, num_co
             "enable_collection": enable_collection,
             "enable_training": enable_training
         }
-        lero_pilot_model.set_training_info(config.db, hyperparams)
+        lero_pilot_model.set_training_info(dataset_name if dataset_name else config.db, hyperparams)
     
     lero_handler = LeroCardPushHandler(lero_pilot_model, config)
 
@@ -135,7 +135,8 @@ def get_lero_preset_scheduler(config, enable_collection, enable_training, num_co
     pretraining_event = LeroPretrainingModelEvent(config, lero_pilot_model, pretraining_data_table,
                                                   enable_collection=enable_collection, enable_training=enable_training, num_collection = num_collection,\
                                                   num_training = num_training, num_epoch = num_epoch,
-                                                  mlflow_tracker=mlflow_tracker)
+                                                  mlflow_tracker=mlflow_tracker,
+                                                  dataset_name=dataset_name)
     scheduler.register_events([pretraining_event])
 
     # Attach model and tracker to scheduler for later access
@@ -147,7 +148,7 @@ def get_lero_preset_scheduler(config, enable_collection, enable_training, num_co
     return scheduler, mlflow_tracker
 
 
-def get_lero_dynamic_preset_scheduler(config) -> PilotScheduler:
+def get_lero_dynamic_preset_scheduler(config, dataset_name=None) -> PilotScheduler:
     model_name = "lero_pair"
 
     import torch
@@ -170,7 +171,7 @@ def get_lero_dynamic_preset_scheduler(config) -> PilotScheduler:
 
     # dynamically collect data
     dynamic_training_data_save_table = "{}_period_training_data_table".format(model_name)
-    period_collect_event = LeroPeriodicCollectEvent(dynamic_training_data_save_table, config, 100)
+    period_collect_event = LeroPeriodicCollectEvent(dynamic_training_data_save_table, config, 100, dataset_name=dataset_name)
     # dynamically update model
     period_train_event = LeroPeriodicModelUpdateEvent(dynamic_training_data_save_table, config, 100,
                                                       lero_pilot_model)

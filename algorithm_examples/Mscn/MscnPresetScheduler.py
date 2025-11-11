@@ -90,9 +90,9 @@ def get_mscn_preset_scheduler(config, enable_collection, enable_training, num_co
             # Fallback to old registry method
             from pilotscope.ModelRegistry import ModelRegistry
             registry = ModelRegistry()
-            best = registry.get_best_model("mscn", test_dataset=config.db)
+            best = registry.get_best_model("mscn", test_dataset=dataset_name if dataset_name else config.db)
             if best:
-                print(f"📊 Loading best model for {config.db}: {best['model_id']}")
+                print(f"📊 Loading best model for {dataset_name if dataset_name else config.db}: {best['model_id']}")
                 mscn_pilot_model = MscnPilotModel.load_model(best['model_id'], "mscn")
             else:
                 print("⚠️  No trained models found, creating new model")
@@ -111,7 +111,7 @@ def get_mscn_preset_scheduler(config, enable_collection, enable_training, num_co
             "enable_collection": enable_collection,
             "enable_training": enable_training
         }
-        mscn_pilot_model.set_training_info(config.db, hyperparams)
+        mscn_pilot_model.set_training_info(dataset_name if dataset_name else config.db, hyperparams)
 
     # core
     scheduler: PilotScheduler = SchedulerFactory.create_scheduler(config)
@@ -126,7 +126,8 @@ def get_mscn_preset_scheduler(config, enable_collection, enable_training, num_co
                                           num_collection=num_collection,
                                           num_training=num_training,
                                           num_epoch=num_epoch,
-                                          mlflow_tracker=mlflow_tracker)
+                                          mlflow_tracker=mlflow_tracker,
+                                          dataset_name=dataset_name)
         scheduler.register_events([event])
 
     # register a card push handler

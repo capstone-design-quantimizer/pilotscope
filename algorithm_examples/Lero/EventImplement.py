@@ -43,7 +43,7 @@ class LeroPretrainingModelEvent(PretrainingModelEvent):
 
     def __init__(self, config: PilotConfig, bind_pilot_model: PilotModel, data_saving_table, enable_collection=True,
                  enable_training=True, num_collection = -1, num_training = -1, num_epoch = 100,
-                 mlflow_tracker=None):
+                 mlflow_tracker=None, dataset_name=None):
         super().__init__(config, bind_pilot_model, data_saving_table, enable_collection, enable_training)
         self.sqls = []
         self.pilot_data_interactor = PilotDataInteractor(self.config)
@@ -51,9 +51,10 @@ class LeroPretrainingModelEvent(PretrainingModelEvent):
         self.num_training = num_training
         self.num_epoch = num_epoch
         self.mlflow_tracker = mlflow_tracker
+        self.dataset_name = dataset_name if dataset_name else config.db
 
     def load_sql(self):
-        self.sqls = load_training_sql(self.config.db)
+        self.sqls = load_training_sql(self.dataset_name)
 
     def iterative_data_collection(self, db_controller: BaseDBController, train_data_manager: DataManager):
         print("start to collect data for pretraining")
@@ -157,13 +158,14 @@ class LeroPeriodicModelUpdateEvent(PeriodicModelUpdateEvent):
 
 
 class LeroPeriodicCollectEvent(QueryFinishEvent):
-    def __init__(self, save_table_name, config, per_query_count):
+    def __init__(self, save_table_name, config, per_query_count, dataset_name=None):
         super().__init__(config, per_query_count)
         self.offset = 0
         self._table_name = save_table_name
+        self.dataset_name = dataset_name if dataset_name else config.db
 
     def load_per_sqls(self):
-        sql_all = load_training_sql(self.config.db)
+        sql_all = load_training_sql(self.dataset_name)
         sqls = sql_all[self.offset * self.interval_count:(self.offset + 1) * self.interval_count]
         self.offset += 1
         return sqls

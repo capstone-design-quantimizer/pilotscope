@@ -16,7 +16,7 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
 
     def __init__(self, config: PilotConfig, bind_pilot_model: PilotModel, data_saving_table, enable_collection=True,
                  enable_training=True, training_data_file=None, num_collection = -1, num_training = -1, num_epoch = 100,
-                 mlflow_tracker=None):
+                 mlflow_tracker=None, dataset_name=None):
         super().__init__(config, bind_pilot_model, data_saving_table, enable_collection, enable_training)
         self.sqls = []
         self.config.once_request_timeout = 60
@@ -27,10 +27,11 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
         self.num_training = num_training
         self.num_epoch = num_epoch
         self.mlflow_tracker = mlflow_tracker
+        self.dataset_name = dataset_name if dataset_name else config.db
 
     def iterative_data_collection(self, db_controller: BaseDBController, train_data_manager: DataManager):
         print("start to collect data for MSCN algorithms")
-        self.sqls = load_training_sql(self.config.db)
+        self.sqls = load_training_sql(self.dataset_name)
         if self.num_collection > 0:
             train_sqls = self.sqls[:self.num_collection]
         else:
@@ -78,7 +79,7 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
                 print(f"       --collection-size -1 --no-training")
                 raise RuntimeError(f"No training data available (0 rows in table).")
 
-            print(f"📂 Loaded {data.shape[0]} collected sql-card pairs from '{self.data_saving_table}'")
+            print(f"📂 Loaded {data.shape[0]} collected sql-card pairs from '{self.data_saving_table}' (dataset: {self.dataset_name})")
 
             if self.num_training > 0:
                 if self.num_training > data.shape[0]:

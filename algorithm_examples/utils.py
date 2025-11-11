@@ -13,6 +13,12 @@ from pilotscope.Dataset.StatsDataset import StatsDataset
 from pilotscope.Dataset.StatsTinyDataset import StatsTinyDataset
 from pilotscope.Dataset.StatsTinyCustomDataset import StatsTinyCustomDataset
 from pilotscope.Dataset.TpcdsDataset import TpcdsDataset
+from pilotscope.Dataset.StockStrategyDataset import (
+    StockStrategyDataset,
+    StockStrategyValueInvestingDataset,
+    StockStrategyMomentumInvestingDataset,
+    StockStrategyMLHybridDataset
+)
 from pilotscope.PilotEnum import DatabaseEnum
 
 
@@ -32,6 +38,15 @@ def load_training_sql(db):
         return ImdbDataset(DatabaseEnum.POSTGRESQL).read_train_sql()
     elif "tpcds" in db.lower():
         return TpcdsDataset(DatabaseEnum).read_train_sql()
+    elif "stock_strategy_value_investing" == db.lower():
+        return StockStrategyValueInvestingDataset(DatabaseEnum.POSTGRESQL).read_train_sql()
+    elif "stock_strategy_momentum_investing" == db.lower():
+        return StockStrategyMomentumInvestingDataset(DatabaseEnum.POSTGRESQL).read_train_sql()
+    elif "stock_strategy_ml_hybrid" == db.lower():
+        return StockStrategyMLHybridDataset(DatabaseEnum.POSTGRESQL).read_train_sql()
+    elif "stock_strategy" == db.lower():
+        # Default workload (value_investing)
+        return StockStrategyDataset(DatabaseEnum.POSTGRESQL).read_train_sql()
     else:
         raise NotImplementedError
 
@@ -47,6 +62,15 @@ def load_test_sql(db):
         return ImdbDataset(DatabaseEnum.POSTGRESQL).read_test_sql()
     elif "tpcds" in db.lower():
         return TpcdsDataset(DatabaseEnum).read_test_sql()
+    elif "stock_strategy_value_investing" == db.lower():
+        return StockStrategyValueInvestingDataset(DatabaseEnum.POSTGRESQL).read_test_sql()
+    elif "stock_strategy_momentum_investing" == db.lower():
+        return StockStrategyMomentumInvestingDataset(DatabaseEnum.POSTGRESQL).read_test_sql()
+    elif "stock_strategy_ml_hybrid" == db.lower():
+        return StockStrategyMLHybridDataset(DatabaseEnum.POSTGRESQL).read_test_sql()
+    elif "stock_strategy" == db.lower():
+        # Default workload (value_investing)
+        return StockStrategyDataset(DatabaseEnum.POSTGRESQL).read_test_sql()
     else:
         raise NotImplementedError
 

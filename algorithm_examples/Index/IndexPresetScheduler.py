@@ -47,7 +47,7 @@ def get_index_preset_scheduler(config: PilotConfig, use_mlflow=True, experiment_
     scheduler: PilotScheduler = SchedulerFactory.create_scheduler(config)
 
     # allow to pretrain model
-    periodic_model_update_event = IndexPeriodicModelUpdateEvent(config, 200, execute_on_init=True, mlflow_tracker=mlflow_tracker)
+    periodic_model_update_event = IndexPeriodicModelUpdateEvent(config, 200, execute_on_init=True, mlflow_tracker=mlflow_tracker, dataset_name=dataset_name)
     scheduler.register_events([periodic_model_update_event])
     scheduler.register_required_data(test_data_table, pull_execution_time=True)
 

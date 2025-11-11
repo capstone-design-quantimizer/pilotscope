@@ -99,7 +99,7 @@ def run_single_test(config: PilotConfig, algo_name: str, db_name: str,
     Args:
         config: PilotConfig 인스턴스
         algo_name: 알고리즘 이름 ('mscn', 'lero', 'baseline' 등)
-        db_name: 데이터베이스 이름 ('stats_tiny', 'imdb' 등)
+        db_name: 데이터베이스 이름 ('stats_tiny', 'imdb' 등) 또는 데이터셋 식별자 ('stock_strategy_value_investing')
         workload_name: 워크로드 이름 (None이면 db_name과 동일, 'custom'이면 '{db_name}_custom')
         algo_params: 알고리즘별 추가 파라미터
         use_mlflow: MLflow 사용 여부 (기본값: True)
@@ -113,8 +113,20 @@ def run_single_test(config: PilotConfig, algo_name: str, db_name: str,
     else:
         dataset_name = f"{db_name}_{workload_name}"  # e.g., "stats_tiny_custom"
 
+    # Set actual PostgreSQL database name
+    # For StockStrategy datasets, all workloads share the same 'stock_strategy' DB
+    if dataset_name.startswith("stock_strategy"):
+        config.db = "stock_strategy"
+        actual_db_display = "stock_strategy"
+    else:
+        config.db = dataset_name
+        actual_db_display = dataset_name
+
     print("\n" + "=" * 60)
-    print(f"Testing: {algo_name.upper()} on {db_name} (workload: {workload_name or 'default'})")
+    print(f"Testing: {algo_name.upper()} on {dataset_name}")
+    if actual_db_display != dataset_name:
+        print(f"  Dataset: {dataset_name}")
+        print(f"  Actual DB: {actual_db_display}")
     print("=" * 60)
 
     # Knob Tuning의 경우 deep control 활성화 (DB 재시작 권한 필요)
