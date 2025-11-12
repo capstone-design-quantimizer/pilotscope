@@ -49,12 +49,38 @@ class QueryMetaData():
         # print(self.expression)
     
     def _parse_predicates(self):
+        # First, extract JOIN ON predicates from JOIN nodes
+        join_on_predicates = set()
+        for join_node in self.expression.find_all(exp.Join):
+            if join_node.on:
+                # The ON clause can be a single predicate or multiple predicates connected by AND
+                self._extract_join_predicates(join_node.on, join_on_predicates)
+
+        # Now process all predicates, but distinguish between JOIN and WHERE predicates
         for pre in self.expression.find_all(exp.Predicate, bfs=False):
-            columns = list(pre.find_all(exp.Column, bfs=False))
-            if len(columns)== 1:
-                self.conditions.append(pre)
-            elif len(columns) == 2:
-                self.joins.append(pre)
+            # Skip predicates that are part of JOIN ON clause
+            if id(pre) in join_on_predicates:
+                columns = list(pre.find_all(exp.Column, bfs=False))
+                if len(columns) == 2:
+                    self.joins.append(pre)
+            else:
+                # These are WHERE clause predicates
+                columns = list(pre.find_all(exp.Column, bfs=False))
+                if len(columns) == 1:
+                    self.conditions.append(pre)
+                elif len(columns) == 2:
+                    # This might be a join condition in WHERE clause (theta join)
+                    self.joins.append(pre)
+
+    def _extract_join_predicates(self, node, predicate_set):
+        """Recursively extract all predicates from a JOIN ON clause"""
+        if isinstance(node, exp.Predicate):
+            predicate_set.add(id(node))
+        elif isinstance(node, (exp.And, exp.Or)):
+            # Recursively process AND/OR nodes
+            for child in [node.left, node.right]:
+                if child:
+                    self._extract_join_predicates(child, predicate_set)
             
     def __str__(self):
         return '\n'.join(["{}: {}".format(k, "[{}]".format(', '.join([s.sql() for s in v])) if (isinstance(v, list) and len(v) != 0 and hasattr(v[0], 'sql')) else v) for k, v in self.__dict__.items()])
