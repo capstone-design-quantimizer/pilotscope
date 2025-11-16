@@ -165,14 +165,42 @@ def run_single_test(config: PilotConfig, algo_name: str, db_name: str,
 
     # 스케줄러 생성 (MLflow 지원 알고리즘은 (scheduler, tracker) 튜플 반환)
     factory = algo_info["factory"]
-    result = factory(config, **params)
+    mlflow_tracker = None
 
-    # Handle return value (tuple for MLflow-enabled algorithms, scheduler only for others)
-    if isinstance(result, tuple):
-        scheduler, mlflow_tracker = result
-    else:
-        scheduler = result
-        mlflow_tracker = None
+    try:
+        result = factory(config, **params)
+
+        # Handle return value (tuple for MLflow-enabled algorithms, scheduler only for others)
+        if isinstance(result, tuple):
+            scheduler, mlflow_tracker = result
+        else:
+            scheduler = result
+            mlflow_tracker = None
+
+    except Exception as e:
+        print(f"\n❌ Error during scheduler initialization (collection/training phase):")
+        print(f"   {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+        # End MLflow run if it was started
+        if mlflow_tracker:
+            print(f"\n📊 Marking MLflow run as FAILED due to collection/training error")
+            mlflow_tracker.end_run(status="FAILED")
+
+        # Return early - skip test phase
+        print(f"\n⏭️  Skipping test phase due to collection/training failure")
+        return {
+            "algorithm": algo_name,
+            "database": db_name,
+            "workload": workload_name or "default",
+            "dataset": dataset_name,
+            "elapsed_time": 0,
+            "params": algo_params,
+            "mlflow_run_id": None,
+            "skipped": "collection_failed",
+            "error": str(e)
+        }
 
     # Backup initial DB state for all algorithms (enables safe cleanup later)
     # Even if algorithm doesn't modify config/indexes, backup is harmless
