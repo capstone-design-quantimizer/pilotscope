@@ -53,7 +53,7 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
             skipped_empty = 0
             collected = 0
 
-            for sub_sql in data.subquery_2_card.keys():
+            for sub_sql, card in data.subquery_2_card.items():
                 # Skip correlated subqueries (contain column placeholders like /* sdi.ticker */)
                 # Check for pattern: /* <identifier> */ (not just table comments)
                 # Table comments are like /* (table_name alias) */, correlated refs are like /* alias.column */
@@ -69,13 +69,10 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
                     skipped_empty += 1
                     continue
 
-                self.pilot_data_interactor.pull_record()
-                sub_data: PilotTransData = self.pilot_data_interactor.execute(sub_sql)
-                if (not sub_data.records is None):
-                    card = int(sub_data.records.values[0][0])
-                    column_2_value = {"query": sub_sql, "card": card}
-                    column_2_value_list.append(column_2_value)
-                    collected += 1
+                # Use the cardinality from data.subquery_2_card (already calculated by PostgreSQL extension)
+                column_2_value = {"query": sub_sql, "card": int(card)}
+                column_2_value_list.append(column_2_value)
+                collected += 1
 
             # Print stats every 10 queries
             if (i + 1) % 10 == 0:
