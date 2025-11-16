@@ -13,6 +13,10 @@ def get_knob_preset_scheduler(config: PilotConfig, use_mlflow=True, experiment_n
     config.sql_execution_timeout = 300000
     config.once_request_timeout = 300000
 
+    # Use dataset_name for loading correct training queries
+    if dataset_name is None:
+        dataset_name = config.db
+
     # Initialize MLflow tracker
     mlflow_tracker = None
     if use_mlflow:
@@ -52,7 +56,8 @@ def get_knob_preset_scheduler(config: PilotConfig, use_mlflow=True, experiment_n
                                                                execute_on_init=True,
                                                                llamatune_config_file="../algorithm_examples/KnobTuning/llamatune/configs/llama_config.ini",
                                                                optimizer_type="smac",
-                                                               mlflow_tracker=mlflow_tracker)
+                                                               mlflow_tracker=mlflow_tracker,
+                                                               dataset_name=dataset_name)
     scheduler.register_events([periodic_model_update_event])
     scheduler.register_required_data("llamatune_data", pull_execution_time=True)
 
