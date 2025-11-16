@@ -53,7 +53,9 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
                 for idx, sub_sql in enumerate(data.subquery_2_card.keys()):
                     print(f"Subquery {idx + 1}: {sub_sql[:200]}")
                     if re.search(r'/\*\s*\w+\.\w+\s*\*/', sub_sql):
-                        print(f"  -> SKIPPING (correlated)")
+                        print(f"  -> SKIPPING (correlated reference)")
+                    elif re.search(r'FROM\s*[;)]', sub_sql):
+                        print(f"  -> SKIPPING (empty FROM clause)")
                 print("=" * 60)
 
             for sub_sql in data.subquery_2_card.keys():
@@ -62,6 +64,12 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
                 # Table comments are like /* (table_name alias) */, correlated refs are like /* alias.column */
                 if re.search(r'/\*\s*\w+\.\w+\s*\*/', sub_sql):
                     # This is a correlated subquery reference, skip it
+                    continue
+
+                # Skip empty/malformed subqueries (e.g., "SELECT COUNT(*) FROM ;")
+                # These are generated when correlated subqueries are extracted
+                if re.search(r'FROM\s*[;)]', sub_sql):
+                    # Empty FROM clause, skip it
                     continue
 
                 self.pilot_data_interactor.pull_record()
