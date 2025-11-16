@@ -366,6 +366,8 @@ def run_multiple_tests(config: PilotConfig, algorithms: List[str],
     """
     여러 알고리즘 + 데이터베이스 + 워크로드 조합을 순차적으로 테스트
 
+    Note: 이 함수는 이제 deprecated되었습니다. 간소화를 위해 run_single_test를 직접 사용하세요.
+
     Args:
         config: PilotConfig 인스턴스
         algorithms: 테스트할 알고리즘 리스트
@@ -411,42 +413,6 @@ def run_multiple_tests(config: PilotConfig, algorithms: List[str],
                 time.sleep(2)
 
     return results
-
-
-# ============================================================================
-# Comparison & Report
-# ============================================================================
-
-def compare_results(results: List[Dict], output_dir: str = "results"):
-    """
-    여러 테스트 결과를 비교하고 출력
-
-    Args:
-        results: run_multiple_tests()의 반환값
-    """
-    if len(results) < 2:
-        print("\n⚠️  Need at least 2 results to compare")
-        return
-
-    print("\n" + "=" * 60)
-    print("Comparison Summary")
-    print("=" * 60)
-
-    # 요약 출력
-    print("\n📊 Test Results:")
-    print("-" * 60)
-    for result in sorted(results, key=lambda x: x["elapsed_time"]):
-        db = result.get('database', result.get('dataset', 'unknown'))
-        workload = result.get('workload', 'default')
-        print(f"  {result['algorithm']:10s} on {db:15s} (workload: {workload:10s}): {result['elapsed_time']:8.2f}s")
-    print("-" * 60)
-
-    # MLflow에 기록된 경우 안내
-    mlflow_runs = [r for r in results if r.get('mlflow_run_id')]
-    if mlflow_runs:
-        print(f"\n💡 {len(mlflow_runs)} runs logged to MLflow. View with:")
-        print(f"   mlflow ui --backend-store-uri mlruns/")
-        print(f"   Then open: http://localhost:5000")
 
 
 # ============================================================================
@@ -505,11 +471,6 @@ def run_from_config_file(config_file: str):
         
         pilotscope_exit()
     
-    # 비교
-    comparison_config = config_data.get("comparison", {})
-    if comparison_config.get("enabled", True):
-        compare_results(results)
-    
     return results
 
 
@@ -523,13 +484,13 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Test multiple algorithms on multiple databases
-  python unified_test.py --algo mscn lero baseline --db stats_tiny imdb --compare
+  # Test single algorithm on single database
+  python unified_test.py --algo mscn --db stats_tiny
 
   # Test with custom workload on stats_tiny database
   python unified_test.py --algo mscn --db stats_tiny --workload custom --epochs 100
 
-  # Test with default workload
+  # Test with custom parameters
   python unified_test.py --algo mscn --db stats_tiny --epochs 50 --training-size 500
 
   # Use JSON config file
@@ -541,11 +502,11 @@ Examples:
     parser.add_argument('--config', help='JSON config file path')
     
     # Algorithm & Dataset selection
-    parser.add_argument('--algo', nargs='+',
+    parser.add_argument('--algo',
                        choices=list(ALGORITHM_REGISTRY.keys()),
-                       help='Algorithms to test')
-    parser.add_argument('--db', nargs='+',
-                       help='Databases to test (e.g., stats_tiny, imdb)')
+                       help='Algorithm to test')
+    parser.add_argument('--db',
+                       help='Database to test (e.g., stats_tiny, imdb, stock_strategy_value_investing)')
     parser.add_argument('--workload',
                        help='Workload to use (default: same as db, custom: use custom workload)')
     
@@ -559,11 +520,7 @@ Examples:
                        help='Disable data collection (use existing data)')
     parser.add_argument('--no-training', action='store_true',
                        help='Disable model training (use existing model)')
-    
-    # Output options
-    parser.add_argument('--compare', action='store_true',
-                       help='Compare results after all tests')
-    
+
     # DB Config
     parser.add_argument('--db-host', help='Database host')
     parser.add_argument('--db-port', help='Database port')
@@ -601,36 +558,32 @@ Examples:
         print(f"⏱️  타임아웃 설정: {args.timeout}초")
     
     # 알고리즘 파라미터 설정
-    algo_params = {}
-    for algo in args.algo:
-        params = {}
+    params = {}
+    if args.epochs is not None:
+        params['num_epoch'] = args.epochs
+    if args.training_size is not None:
+        params['num_training'] = args.training_size
+    if args.collection_size is not None:
+        params['num_collection'] = args.collection_size
+        # Automatically enable collection when collection size is specified
+        params['enable_collection'] = True
+    if args.no_collection:
+        params['enable_collection'] = False
+    if args.no_training:
+        params['enable_training'] = False
 
-        if args.epochs is not None:
-            params['num_epoch'] = args.epochs
-        if args.training_size is not None:
-            params['num_training'] = args.training_size
-        if args.collection_size is not None:
-            params['num_collection'] = args.collection_size
-            # Automatically enable collection when collection size is specified
-            params['enable_collection'] = True
-        if args.no_collection:
-            params['enable_collection'] = False
-        if args.no_training:
-            params['enable_training'] = False
-
-        algo_params[algo] = params
-    
     # 테스트 실행
     try:
-        results = run_multiple_tests(config, args.algo, args.db, args.workload, algo_params)
-        
-        # 비교
-        if args.compare and len(results) > 1:
-            compare_results(results)
-        
-        print("\n" + "=" * 60)
-        print("✨ All tests completed!")
-        print("=" * 60)
+        result = run_single_test(config, args.algo, args.db, args.workload, params)
+
+        if result:
+            print("\n" + "=" * 60)
+            print("✨ Test completed!")
+            print("=" * 60)
+        else:
+            print("\n" + "=" * 60)
+            print("⚠️  Test completed with issues")
+            print("=" * 60)
         
     except KeyboardInterrupt:
         print("\n\n⚠️  Interrupted by user")
