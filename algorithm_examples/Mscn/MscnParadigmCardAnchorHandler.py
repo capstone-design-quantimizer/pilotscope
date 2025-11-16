@@ -9,15 +9,13 @@ from pilotscope.PilotTransData import PilotTransData
 class MscnCardPushHandler(CardPushHandler):
 
     def __init__(self, model: PilotModel, config: PilotConfig) -> None:
-        # Enable parameterized subquery to handle correlated subqueries correctly
-        super().__init__(config, enable_parameterized_subquery=True)
+        super().__init__(config)
         self.mscn_model = model
         self.config = config
         self.data_interactor = PilotDataInteractor(config)
 
     def acquire_injected_data(self, sql):
-        # Enable parameterized subquery when pulling subquery cards
-        self.data_interactor.pull_subquery_card(enable_parameterized_subquery=True)
+        self.data_interactor.pull_subquery_card()
         data: PilotTransData = self.data_interactor.execute(sql)
         assert data.subquery_2_card is not None
         subquery_2_card = data.subquery_2_card

@@ -43,15 +43,23 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
             if i % 10 == 0:
                 print("current is the {}-th sql, total is {}. (print per 10)".format(i, len(train_sqls)))
 
-            # Enable parameterized subquery to handle correlated subqueries correctly
-            self.pilot_data_interactor.pull_subquery_card(enable_parameterized_subquery=True)
+            self.pilot_data_interactor.pull_subquery_card()
             data: PilotTransData = self.pilot_data_interactor.execute(sql)
             for sub_sql in data.subquery_2_card.keys():
+                # Skip correlated subqueries (contain column placeholders like /* sdi.ticker */)
+                # Check for pattern: /* <identifier> */ (not just table comments)
+                import re
+                # Match: /* followed by identifier followed by */
+                # Table comments are like /* (table_name alias) */, correlated refs are like /* alias.column */
+                if re.search(r'/\*\s*\w+\.\w+\s*\*/', sub_sql):
+                    # This is a correlated subquery reference, skip it
+                    continue
+
                 self.pilot_data_interactor.pull_record()
                 data: PilotTransData = self.pilot_data_interactor.execute(sub_sql)
             if (not data.records is None):
                 column_2_value = {"query": sub_sql, "card": int(data.records.values[0][0])}
-            column_2_value_list.append(column_2_value)
+                column_2_value_list.append(column_2_value)
 
         return column_2_value_list, True
 
