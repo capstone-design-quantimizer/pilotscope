@@ -90,6 +90,11 @@ def normalize_data(val, column_name, column_min_max_vals):
 
     min_val = column_min_max_vals[column_name][0]
     max_val = column_min_max_vals[column_name][1]
+
+    # Handle None values (empty tables, NULL columns, or missing ANALYZE statistics)
+    if min_val is None or max_val is None:
+        return np.array(0.0, dtype=np.float32)
+
     val = float(val)
     val_norm = 0.0
     if max_val > min_val:
