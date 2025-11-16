@@ -250,7 +250,8 @@ def to_workload(sqls):
         sql_ast = parse_one(sql)
         unalias = dict()
         for table in sql_ast.find_all(exp.Table):
-            if len(table.alias) > 0:
+            # Handle table aliases properly
+            if table.alias and len(table.alias) > 0:
                 unalias[table.alias] = table.name
             unalias[table.name] = table.name
             if table.name not in table_dict:
@@ -258,7 +259,17 @@ def to_workload(sqls):
         cols = []
         for col in sql_ast.find_all(exp.Column):
             c = Column(col.alias_or_name)
-            table_dict[unalias[col.table]].add_column(c)
-            cols.append(c)
+            # Check if col.table exists in unalias mapping
+            if col.table and col.table in unalias:
+                table_dict[unalias[col.table]].add_column(c)
+                cols.append(c)
+            elif col.table:
+                # If table is not in unalias, it might be the actual table name
+                # Try to find it in table_dict
+                if col.table in table_dict:
+                    table_dict[col.table].add_column(c)
+                    cols.append(c)
+                else:
+                    logging.warning(f"Column {col.sql()} references unknown table {col.table}")
         query_list.append(Query(i, sql, cols))
     return Workload(query_list)
