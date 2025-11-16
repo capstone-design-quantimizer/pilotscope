@@ -47,6 +47,15 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
             data: PilotTransData = self.pilot_data_interactor.execute(sql)
 
             import re
+            # Debug: print first query's subqueries
+            if i == 0:
+                print(f"\n=== DEBUG: First query has {len(data.subquery_2_card)} subqueries ===")
+                for idx, sub_sql in enumerate(data.subquery_2_card.keys()):
+                    print(f"Subquery {idx + 1}: {sub_sql[:200]}")
+                    if re.search(r'/\*\s*\w+\.\w+\s*\*/', sub_sql):
+                        print(f"  -> SKIPPING (correlated)")
+                print("=" * 60)
+
             for sub_sql in data.subquery_2_card.keys():
                 # Skip correlated subqueries (contain column placeholders like /* sdi.ticker */)
                 # Check for pattern: /* <identifier> */ (not just table comments)
