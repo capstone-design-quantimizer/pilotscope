@@ -53,16 +53,7 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
             skipped_empty = 0
             collected = 0
 
-            # Debug: print first query's subquery_2_card structure
-            if i == 0 and len(data.subquery_2_card) > 0:
-                print(f"\n=== DEBUG: data.subquery_2_card structure (first query) ===")
-                for idx, (sub_sql, card) in enumerate(list(data.subquery_2_card.items())[:2]):
-                    print(f"  Subquery {idx+1}:")
-                    print(f"    SQL: {sub_sql[:100]}...")
-                    print(f"    Card: {card} (type={type(card).__name__})")
-                print("=" * 60 + "\n")
-
-            for sub_sql, card in data.subquery_2_card.items():
+            for sub_sql in data.subquery_2_card.keys():
                 # Skip correlated subqueries (contain column placeholders like /* sdi.ticker */)
                 # Check for pattern: /* <identifier> */ (not just table comments)
                 # Table comments are like /* (table_name alias) */, correlated refs are like /* alias.column */
@@ -78,10 +69,14 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
                     skipped_empty += 1
                     continue
 
-                # Use the cardinality from data.subquery_2_card (already calculated by PostgreSQL extension)
-                column_2_value = {"query": sub_sql, "card": int(card)}
-                column_2_value_list.append(column_2_value)
-                collected += 1
+                # Execute the subquery (which is "SELECT COUNT(*) FROM ... WHERE ...") to get cardinality
+                self.pilot_data_interactor.pull_record()
+                sub_data: PilotTransData = self.pilot_data_interactor.execute(sub_sql)
+                if (not sub_data.records is None):
+                    card = int(sub_data.records.values[0][0])
+                    column_2_value = {"query": sub_sql, "card": card}
+                    column_2_value_list.append(column_2_value)
+                    collected += 1
 
             # Print stats every 10 queries
             if (i + 1) % 10 == 0:
