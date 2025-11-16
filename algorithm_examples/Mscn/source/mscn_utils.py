@@ -175,7 +175,12 @@ class Feature():
             for col_name, col_dict in table_dict["columns"].items():
                 col_fullname = ".".join([table_name, col_name])
                 # print(col_dict)
-                self.column_min_max_vals[col_fullname] = [col_dict["min"], col_dict["max"]]
+                # Only add min/max for numeric/timestamp columns
+                # Skip if: 1) 'min'/'max' keys don't exist (non-numeric types)
+                #          2) 'min'/'max' exist but are None (empty tables, NULL columns, missing ANALYZE)
+                if "min" in col_dict and "max" in col_dict:
+                    if col_dict["min"] is not None and col_dict["max"] is not None:
+                        self.column_min_max_vals[col_fullname] = [col_dict["min"], col_dict["max"]]
 
         # Get feature encoding and proper normalization
         # samples_enc = encode_samples(tables, samples, table2vec)

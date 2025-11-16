@@ -53,6 +53,15 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
             skipped_empty = 0
             collected = 0
 
+            # Debug: print first query's subquery_2_card structure
+            if i == 0 and len(data.subquery_2_card) > 0:
+                print(f"\n=== DEBUG: data.subquery_2_card structure (first query) ===")
+                for idx, (sub_sql, card) in enumerate(list(data.subquery_2_card.items())[:2]):
+                    print(f"  Subquery {idx+1}:")
+                    print(f"    SQL: {sub_sql[:100]}...")
+                    print(f"    Card: {card} (type={type(card).__name__})")
+                print("=" * 60 + "\n")
+
             for sub_sql, card in data.subquery_2_card.items():
                 # Skip correlated subqueries (contain column placeholders like /* sdi.ticker */)
                 # Check for pattern: /* <identifier> */ (not just table comments)
