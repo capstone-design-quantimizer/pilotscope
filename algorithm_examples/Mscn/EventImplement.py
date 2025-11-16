@@ -92,6 +92,12 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
 
                 if (not sub_data.records is None):
                     card = int(sub_data.records.values[0][0])
+
+                    # Debug: print first 5 NON-ZERO cardinalities to verify data exists
+                    if card > 0 and len([c for c in column_2_value_list if c['card'] > 0]) < 5:
+                        print(f"🎯 Non-zero cardinality found! Query {i}, card={card}")
+                        print(f"   SQL: {sub_sql[:150]}...")
+
                     column_2_value = {"query": sub_sql, "card": card}
                     column_2_value_list.append(column_2_value)
                     collected += 1
@@ -150,6 +156,19 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
             print(f"   Card=0: {np.sum(cards == 0)}, Card=1: {np.sum(cards == 1)}, Card>1: {np.sum(cards > 1)}")
             if len(np.unique(cards)) <= 20:
                 print(f"   All unique cards: {sorted(np.unique(cards).tolist())}")
+
+            # Debug: print sample queries with different cardinalities
+            if np.sum(cards > 0) > 0:
+                print(f"\n📝 Sample queries with card > 0:")
+                non_zero_data = data[data["card"] > 0]
+                for idx in range(min(3, len(non_zero_data))):
+                    row = non_zero_data.iloc[idx]
+                    print(f"   Card={row['card']}: {row['query'][:100]}...")
+            else:
+                print(f"\n⚠️  WARNING: All {len(cards)} cardinalities are 0!")
+                print(f"   Sample queries:")
+                for idx in range(min(3, len(data))):
+                    print(f"   {data.iloc[idx]['query'][:100]}...")
             print()
 
             tables, joins, predicates = parse_queries(data["query"].values)
