@@ -11,7 +11,8 @@ import numpy as np
 class LeroCardPushHandler(CardPushHandler):
 
     def __init__(self, model: PilotModel, config: PilotConfig) -> None:
-        super().__init__(config)
+        # Enable parameterized subquery to handle correlated subqueries correctly
+        super().__init__(config, enable_parameterized_subquery=True)
         self.model = model
         self.config = config
         self.db_controller = DBControllerFactory.get_db_controller(config)
@@ -37,9 +38,10 @@ class LeroCardPushHandler(CardPushHandler):
         return best_idx
 
     def acquire_injected_data(self, sql):
-        
+
         # Pull subquery and its cardinality
-        self.pilot_data_interactor.pull_subquery_card()
+        # Enable parameterized subquery when pulling subquery cards
+        self.pilot_data_interactor.pull_subquery_card(enable_parameterized_subquery=True)
         data: PilotTransData = self.pilot_data_interactor.execute(sql)
         assert data is not None
         subquery_2_card = data.subquery_2_card
