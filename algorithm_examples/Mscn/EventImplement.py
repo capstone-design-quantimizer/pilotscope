@@ -53,6 +53,9 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
             skipped_empty = 0
             collected = 0
 
+            # Debug: print first query's first subquery details
+            debug_printed = False
+
             for sub_sql in data.subquery_2_card.keys():
                 # Skip correlated subqueries (contain column placeholders like /* sdi.ticker */)
                 # Check for pattern: /* <identifier> */ (not just table comments)
@@ -72,6 +75,20 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
                 # Execute the subquery (which is "SELECT COUNT(*) FROM ... WHERE ...") to get cardinality
                 self.pilot_data_interactor.pull_record()
                 sub_data: PilotTransData = self.pilot_data_interactor.execute(sub_sql)
+
+                # Debug: print first successful subquery details
+                if i == 0 and not debug_printed and sub_data.records is not None:
+                    print(f"\n=== DEBUG: First valid subquery (query 0) ===")
+                    print(f"SQL: {sub_sql[:200]}...")
+                    print(f"records type: {type(sub_data.records)}")
+                    print(f"records.values: {sub_data.records.values if hasattr(sub_data.records, 'values') else 'NO VALUES ATTR'}")
+                    if hasattr(sub_data.records, 'values'):
+                        print(f"records.values[0]: {sub_data.records.values[0] if len(sub_data.records.values) > 0 else 'EMPTY'}")
+                        if len(sub_data.records.values) > 0:
+                            print(f"records.values[0][0]: {sub_data.records.values[0][0]}")
+                    print("=" * 60 + "\n")
+                    debug_printed = True
+
                 if (not sub_data.records is None):
                     card = int(sub_data.records.values[0][0])
                     column_2_value = {"query": sub_sql, "card": card}
