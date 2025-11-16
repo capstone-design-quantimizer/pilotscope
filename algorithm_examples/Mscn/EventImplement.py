@@ -47,16 +47,11 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
             data: PilotTransData = self.pilot_data_interactor.execute(sql)
 
             import re
-            # Debug: print first query's subqueries
-            if i == 0:
-                print(f"\n=== DEBUG: First query has {len(data.subquery_2_card)} subqueries ===")
-                for idx, sub_sql in enumerate(data.subquery_2_card.keys()):
-                    print(f"Subquery {idx + 1}: {sub_sql[:200]}")
-                    if re.search(r'/\*\s*\w+\.\w+\s*\*/', sub_sql):
-                        print(f"  -> SKIPPING (correlated reference)")
-                    elif re.search(r'FROM\s*[;)]', sub_sql):
-                        print(f"  -> SKIPPING (empty FROM clause)")
-                print("=" * 60)
+            # Debug stats for collection
+            total_subqueries = len(data.subquery_2_card)
+            skipped_correlated = 0
+            skipped_empty = 0
+            collected = 0
 
             for sub_sql in data.subquery_2_card.keys():
                 # Skip correlated subqueries (contain column placeholders like /* sdi.ticker */)
@@ -64,19 +59,27 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
                 # Table comments are like /* (table_name alias) */, correlated refs are like /* alias.column */
                 if re.search(r'/\*\s*\w+\.\w+\s*\*/', sub_sql):
                     # This is a correlated subquery reference, skip it
+                    skipped_correlated += 1
                     continue
 
                 # Skip empty/malformed subqueries (e.g., "SELECT COUNT(*) FROM ;")
                 # These are generated when correlated subqueries are extracted
                 if re.search(r'FROM\s*[;)]', sub_sql):
                     # Empty FROM clause, skip it
+                    skipped_empty += 1
                     continue
 
                 self.pilot_data_interactor.pull_record()
                 sub_data: PilotTransData = self.pilot_data_interactor.execute(sub_sql)
                 if (not sub_data.records is None):
-                    column_2_value = {"query": sub_sql, "card": int(sub_data.records.values[0][0])}
+                    card = int(sub_data.records.values[0][0])
+                    column_2_value = {"query": sub_sql, "card": card}
                     column_2_value_list.append(column_2_value)
+                    collected += 1
+
+            # Print stats every 10 queries
+            if (i + 1) % 10 == 0:
+                print(f"Query {i+1}/{len(self.sqls)}: subqueries={total_subqueries}, collected={collected}, skipped_correlated={skipped_correlated}, skipped_empty={skipped_empty}")
 
         return column_2_value_list, True
 
@@ -118,6 +121,18 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
                 data = data[:self.num_training]
 
             print(f"🎓 Training MSCN on {data.shape[0]} sql-card pairs")
+
+            # Debug: print cardinality distribution
+            import numpy as np
+            cards = data["card"].values
+            print(f"\n📊 Cardinality Distribution:")
+            print(f"   Min: {np.min(cards)}, Max: {np.max(cards)}, Mean: {np.mean(cards):.2f}, Median: {np.median(cards):.2f}")
+            print(f"   Unique values: {len(np.unique(cards))}")
+            print(f"   Card=0: {np.sum(cards == 0)}, Card=1: {np.sum(cards == 1)}, Card>1: {np.sum(cards > 1)}")
+            if len(np.unique(cards)) <= 20:
+                print(f"   All unique cards: {sorted(np.unique(cards).tolist())}")
+            print()
+
             tables, joins, predicates = parse_queries(data["query"].values)
             schema = load_schema(self.pilot_data_interactor.db_controller)
             model = MscnModel()
