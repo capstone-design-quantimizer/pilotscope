@@ -37,11 +37,14 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
         else:
             train_sqls = self.sqls
         column_2_value_list = []
+        skipped_count = 0
         for i, sql in enumerate(train_sqls):
             # print per 10
             if i % 10 == 0:
                 print("current is the {}-th sql, total is {}. (print per 10)".format(i, len(train_sqls)))
-            self.pilot_data_interactor.pull_subquery_card()
+
+            # Enable parameterized subquery to handle correlated subqueries correctly
+            self.pilot_data_interactor.pull_subquery_card(enable_parameterized_subquery=True)
             data: PilotTransData = self.pilot_data_interactor.execute(sql)
             for sub_sql in data.subquery_2_card.keys():
                 self.pilot_data_interactor.pull_record()
@@ -49,6 +52,7 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
             if (not data.records is None):
                 column_2_value = {"query": sub_sql, "card": int(data.records.values[0][0])}
             column_2_value_list.append(column_2_value)
+
         return column_2_value_list, True
 
     def custom_model_training(self, bind_pilot_model, db_controller: BaseDBController,
