@@ -56,21 +56,24 @@ class QueryMetaData():
                 # The ON clause can be a single predicate or multiple predicates connected by AND
                 self._extract_join_predicates(join_node.on, join_on_predicates)
 
-        # Now process all predicates, but distinguish between JOIN and WHERE predicates
+        # Now process all predicates from the main query (not subqueries)
+        # We only want to process predicates that are direct children of the main SELECT
         for pre in self.expression.find_all(exp.Predicate, bfs=False):
-            # Skip predicates that are part of JOIN ON clause
+            # Check if this predicate is part of JOIN ON clause
             if id(pre) in join_on_predicates:
+                # This is a JOIN ON predicate
                 columns = list(pre.find_all(exp.Column, bfs=False))
                 if len(columns) == 2:
                     self.joins.append(pre)
             else:
-                # These are WHERE clause predicates
+                # This is a WHERE clause predicate (or from subquery)
+                # For MSCN, we only handle single-column predicates in conditions
+                # Multi-column predicates in WHERE (like correlated subqueries) are skipped
                 columns = list(pre.find_all(exp.Column, bfs=False))
                 if len(columns) == 1:
                     self.conditions.append(pre)
-                elif len(columns) == 2:
-                    # This might be a join condition in WHERE clause (theta join)
-                    self.joins.append(pre)
+                # Note: We don't add 2-column WHERE predicates to joins
+                # This handles correlated subqueries correctly
 
     def _extract_join_predicates(self, node, predicate_set):
         """Recursively extract all predicates from a JOIN ON clause"""
@@ -172,7 +175,12 @@ class Feature():
             for col_name, col_dict in table_dict["columns"].items():
                 col_fullname = ".".join([table_name, col_name])
                 # print(col_dict)
-                self.column_min_max_vals[col_fullname] = [col_dict["min"], col_dict["max"]]
+                # Only add min/max for numeric/timestamp columns
+                # Skip if: 1) 'min'/'max' keys don't exist (non-numeric types)
+                #          2) 'min'/'max' exist but are None (empty tables, NULL columns, missing ANALYZE)
+                if "min" in col_dict and "max" in col_dict:
+                    if col_dict["min"] is not None and col_dict["max"] is not None:
+                        self.column_min_max_vals[col_fullname] = [col_dict["min"], col_dict["max"]]
 
         # Get feature encoding and proper normalization
         # samples_enc = encode_samples(tables, samples, table2vec)

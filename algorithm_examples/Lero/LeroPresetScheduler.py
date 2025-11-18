@@ -144,7 +144,15 @@ def get_lero_preset_scheduler(config, enable_collection, enable_training, num_co
     scheduler.mlflow_tracker = mlflow_tracker
 
     # start
-    scheduler.init()
+    try:
+        scheduler.init()
+    except Exception as e:
+        # If initialization fails, end MLflow run with FAILED status
+        if mlflow_tracker:
+            print(f"\n❌ Scheduler initialization failed, marking MLflow run as FAILED")
+            mlflow_tracker.end_run(status="FAILED")
+        raise  # Re-raise the exception for caller to handle
+
     return scheduler, mlflow_tracker
 
 

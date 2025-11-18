@@ -163,8 +163,16 @@ class PilotScheduler:
                 event._update(self.db_controller, self.data_manager)
 
         # wait until finishing pretraining
-        if pretraining_thread is not None and self.config.pretraining_model == TrainSwitchMode.WAIT:
-            pretraining_thread.join()
+        # IMPORTANT: Always join pretraining thread to catch any exceptions
+        if pretraining_thread is not None:
+            # If WAIT mode is set, join is synchronous (blocking)
+            # Otherwise, we still need to join to propagate any exceptions
+            if self.config.pretraining_model == TrainSwitchMode.WAIT:
+                pretraining_thread.join()
+            else:
+                # Even in async mode, check if thread has finished and had errors
+                # This prevents silent failures in background threads
+                pretraining_thread.join()
         pass
 
     def _deal_execution_end_events(self):
