@@ -59,9 +59,33 @@ if [ -f "/home/pilotscope/workspace/requirements.txt" ]; then
     fi
 fi
 
+# Start MLflow UI in background
+echo "Starting MLflow UI..."
+MLFLOW_PORT=5000
+MLRUNS_DIR="/home/pilotscope/workspace/mlruns"
+
+# Create mlruns directory if it doesn't exist
+mkdir -p "$MLRUNS_DIR"
+
+# Start MLflow UI in background with logging
+nohup mlflow ui \
+    --backend-store-uri "file://$MLRUNS_DIR" \
+    --host 0.0.0.0 \
+    --port "$MLFLOW_PORT" \
+    > /home/pilotscope/mlflow-ui.log 2>&1 &
+
+# Wait a moment to check if MLflow started successfully
+sleep 2
+if pgrep -f "mlflow ui" > /dev/null; then
+    echo "MLflow UI started successfully!"
+else
+    echo "Warning: MLflow UI may have failed to start. Check /home/pilotscope/mlflow-ui.log"
+fi
+
 echo "========================================"
 echo "Environment ready!"
 echo "PostgreSQL: localhost:5432"
+echo "MLflow UI: http://localhost:5000 (container) or http://localhost:54321 (host)"
 echo "SSH: localhost:54023 (user: pilotscope, password: pilotscope)"
 echo "Conda env: pilotscope"
 echo "Working directory: $(pwd)"

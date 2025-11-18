@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
 """
 통합 테스트 프레임워크 - 여러 알고리즘과 데이터셋을 쉽게 조합하여 테스트
+모든 결과는 MLflow에 자동으로 로깅됩니다.
 
 사용법:
-    # 여러 알고리즘과 데이터셋 조합 테스트
-    python unified_test.py --algo mscn lero baseline --db stats_tiny production --compare
+    # 단일 알고리즘 테스트
+    python unified_test.py --algo mscn --db stats_tiny
 
     # JSON config 파일로 실행
     python unified_test.py --config test_configs/production_experiment.json
 
-    # 특정 조합만 테스트
-    python unified_test.py --algo mscn --db production --epochs 100 --training-size 500
+    # 파라미터 조정
+    python unified_test.py --algo mscn --db stats_tiny --epochs 100 --training-size 500
+
+    # 기존 모델 로드 (학습 없이)
+    python unified_test.py --algo mscn --db stats_tiny --no-training
+
+    # MLflow UI에서 결과 확인 (브라우저: http://localhost:54321)
 """
 
 import sys

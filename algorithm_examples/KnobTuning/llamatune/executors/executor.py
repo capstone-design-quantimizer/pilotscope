@@ -321,7 +321,8 @@ class SysmlExecutor(ExecutorInterface):
 
     def evaluate_configuration(self, dbms_info, benchmark_info):
         with open(self.sqls_file_path, "r") as f:
-            sqls = f.readlines()
+            # Filter out empty lines and strip whitespace
+            sqls = [line.strip() for line in f.readlines() if line.strip()]
         try:
             self.data_interactor.push_knob(dbms_info["config"])
             self.data_interactor.pull_execution_time()

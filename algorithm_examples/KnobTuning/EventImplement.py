@@ -115,10 +115,11 @@ class KnobPeriodicModelUpdateEvent(PeriodicModelUpdateEvent):
         # Load training SQLs for the dataset
         train_sqls = load_training_sql(self.dataset_name)
 
-        # Create temporary SQL file
-        temp_sql_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+        # Create temporary SQL file with LF line endings
+        temp_sql_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, newline='\n')
         for sql in train_sqls:
-            temp_sql_file.write(sql + '\n')
+            # Remove any trailing whitespace/newlines and add single LF
+            temp_sql_file.write(sql.rstrip() + '\n')
         temp_sql_file.close()
 
         # Read template config
