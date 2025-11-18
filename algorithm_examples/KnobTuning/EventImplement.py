@@ -94,20 +94,48 @@ def llamatune(conf):
 
 class KnobPeriodicModelUpdateEvent(PeriodicModelUpdateEvent):
     def __init__(self, config, per_query_count, llamatune_config_file, execute_on_init=True,
-                 optimizer_type="smac", mlflow_tracker=None):
+                 optimizer_type="smac", mlflow_tracker=None, dataset_name=None):
         super().__init__(config, per_query_count, execute_on_init=execute_on_init)
         self.optimizer_type = optimizer_type
         self.llamatune_config_file = llamatune_config_file
         self.mlflow_tracker = mlflow_tracker
         self.update_count = 0
+        self.dataset_name = dataset_name if dataset_name else config.db
 
     def custom_model_update(self, pilot_model: PilotModel, db_controller: BaseDBController,
                             data_manager: DataManager):
         db_controller.recover_config()
         db_controller.restart()
 
+        # Create temporary config file with dynamic SQL path
+        import tempfile
+        import configparser
+        from algorithm_examples.utils import load_training_sql
+
+        # Load training SQLs for the dataset
+        train_sqls = load_training_sql(self.dataset_name)
+
+        # Create temporary SQL file
+        temp_sql_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+        for sql in train_sqls:
+            temp_sql_file.write(sql + '\n')
+        temp_sql_file.close()
+
+        # Read template config
+        template_config = configparser.ConfigParser()
+        template_config.read(self.llamatune_config_file)
+
+        # Update executor section with dynamic paths
+        template_config.set('executor', 'sqls_file_path', temp_sql_file.name)
+        template_config.set('executor', 'db_name', self.config.db)
+
+        # Create temporary config file
+        temp_config_file = tempfile.NamedTemporaryFile(mode='w', suffix='.ini', delete=False)
+        template_config.write(temp_config_file)
+        temp_config_file.close()
+
         conf = {
-            "conf_filepath": self.llamatune_config_file,
+            "conf_filepath": temp_config_file.name,
             "seed": int(time.time()),
             "optimizer": self.optimizer_type
         }
@@ -115,6 +143,14 @@ class KnobPeriodicModelUpdateEvent(PeriodicModelUpdateEvent):
         start_time = time.time()
         exp_state = llamatune(conf)
         optimization_time = time.time() - start_time
+
+        # Cleanup temporary files
+        import os
+        try:
+            os.unlink(temp_sql_file.name)
+            os.unlink(temp_config_file.name)
+        except Exception as e:
+            logger.warning(f"Failed to cleanup temp files: {e}")
 
         # Log to MLflow
         if self.mlflow_tracker:
