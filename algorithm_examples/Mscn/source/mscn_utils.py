@@ -32,12 +32,46 @@ class QueryMetaData():
         self._parse_predicates()
         
     def _parse_table(self):
+        # CTE Support: Extract real tables from inside CTE definitions
+        # CTE aliases (like 'base', 'scored') are not real tables, so we skip them
+        cte_aliases = set()
+
+        # Step 1: Find all CTEs and extract real tables from inside them
+        for cte in self.expression.find_all(exp.CTE, bfs=False):
+            # Record CTE alias to exclude it from table list
+            cte_alias = cte.alias
+            if cte_alias:
+                cte_aliases.add(cte_alias)
+
+            # Extract real tables from inside the CTE query
+            cte_query = cte.this  # The SELECT statement inside WITH
+            if cte_query:
+                for table in cte_query.find_all(exp.Table, bfs=False):
+                    # Add real table if not already added and not a CTE alias
+                    if table.name not in self.tables and table.name not in cte_aliases:
+                        self.tables.append(table.name)
+
+        # Step 2: Parse regular tables (excluding CTE aliases)
         for table in self.expression.find_all(exp.Table, bfs=False):
-            self.tables.append(table.name)
+            # Skip CTE aliases - they're not real tables
+            if table.name in cte_aliases:
+                continue
+
+            if table.name not in self.tables:
+                self.tables.append(table.name)
+
+            # Handle table aliases
             if table.alias:
                 self.table_alias.append(table.alias)
                 self.names_to_alias[table.name] = table.alias
                 self.alias_to_names[table.alias] = table.name
+
+        # Validation: Ensure we found at least one real table
+        if not self.tables:
+            raise ValueError(
+                f"Query parsing failed: No tables found in query. "
+                f"Query: {self.raw[:200]}"
+            )
                 
     def _replace_table_alias(self):
         for k, v in self.alias_to_names.items():
@@ -52,13 +86,16 @@ class QueryMetaData():
         # First, extract JOIN ON predicates from JOIN nodes
         join_on_predicates = set()
         for join_node in self.expression.find_all(exp.Join):
-            if join_node.on:
+            # Access ON clause via args dict (join_node.on is a method, not an attribute)
+            on_clause = join_node.args.get('on')
+            if on_clause:
                 # The ON clause can be a single predicate or multiple predicates connected by AND
-                self._extract_join_predicates(join_node.on, join_on_predicates)
+                self._extract_join_predicates(on_clause, join_on_predicates)
 
-        # Now process all predicates from the main query (not subqueries)
-        # We only want to process predicates that are direct children of the main SELECT
-        for pre in self.expression.find_all(exp.Predicate, bfs=False):
+        # Now process all predicates from the query (including CTEs)
+        # Note: CTE is part of the main query, not a subquery, so we need to traverse into CTEs
+        # Changed from bfs=False to default (bfs=True) to support CTEs with JOINs
+        for pre in self.expression.find_all(exp.Predicate):
             # Check if this predicate is part of JOIN ON clause
             if id(pre) in join_on_predicates:
                 # This is a JOIN ON predicate
@@ -259,13 +296,19 @@ def parse_queries(queries):
         joins = []
         predicates = []
         tables = []
-        for sql in queries:
-            meta_data = mscnQueryMeta(sql)
-            join = [join.sql() for join in meta_data.joins]
-            predicate = meta_data.conditions_tokens
-            joins.append(join if len(join) != 0 else [""])
-            predicates.append(predicate if len(predicate) != 0 else [""])
-            tables.append(meta_data.tables)
+        for idx, sql in enumerate(queries):
+            try:
+                meta_data = mscnQueryMeta(sql)
+                join = [join.sql() for join in meta_data.joins]
+                predicate = meta_data.conditions_tokens
+                joins.append(join if len(join) != 0 else [""])
+                predicates.append(predicate if len(predicate) != 0 else [""])
+                tables.append(meta_data.tables)
+            except ValueError as e:
+                # Re-raise with more context about which query failed
+                raise ValueError(
+                    f"Failed to parse query {idx+1}/{len(queries)}: {str(e)}"
+                ) from e
         return tables, joins, predicates
     
 # load tokens from token_file(MSCN style) or query_file(DeepDB style)

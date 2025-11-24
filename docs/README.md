@@ -14,6 +14,10 @@
 
 **STOCK_STRATEGY_*.md**: Stock Strategy Dataset 예제 (외부 DB 덤프 활용)
 
+**WORKLOAD_COMPATIBILITY.md**: 알고리즘-워크로드 호환성 가이드 (Index/CTE 제약사항)
+
+**CTE_SUPPORT_IMPLEMENTATION.md**: CTE 지원 구현 가이드 (MSCN/Lero 수정 방법)
+
 ## 시작 순서
 
 1. 처음: DOCKER_GUIDE.md → MLFLOW_QUICKSTART.md

@@ -38,6 +38,7 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
             train_sqls = self.sqls
         column_2_value_list = []
         skipped_count = 0
+        parsing_errors = 0  # Track parsing failures
         debug_printed = False  # Global flag to print first successful collection only
 
         for i, sql in enumerate(train_sqls):
@@ -45,8 +46,17 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
             if i % 10 == 0:
                 print("current is the {}-th sql, total is {}. (print per 10)".format(i, len(train_sqls)))
 
-            self.pilot_data_interactor.pull_subquery_card()
-            data: PilotTransData = self.pilot_data_interactor.execute(sql)
+            try:
+                self.pilot_data_interactor.pull_subquery_card()
+                data: PilotTransData = self.pilot_data_interactor.execute(sql)
+            except Exception as e:
+                # Catch parsing errors (e.g., CTE not supported)
+                parsing_errors += 1
+                if parsing_errors <= 3:  # Print first 3 errors
+                    print(f"\n❌ Query {i+1} parsing/execution failed: {str(e)[:150]}")
+                    if "CTE" in str(e):
+                        print(f"   💡 Tip: This query uses CTE (WITH clause) which is not supported by MSCN")
+                continue
 
             import re
             # Debug stats for collection
@@ -105,6 +115,38 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
             # Print stats every 10 queries
             if (i + 1) % 10 == 0:
                 print(f"Query {i+1}/{len(self.sqls)}: subqueries={total_subqueries}, collected={collected}, skipped_correlated={skipped_correlated}, skipped_empty={skipped_empty}")
+
+        # Print collection summary
+        print(f"\n{'='*60}")
+        print(f"📊 Collection Summary")
+        print(f"{'='*60}")
+        print(f"Total queries processed: {len(train_sqls)}")
+        print(f"Parsing errors: {parsing_errors}")
+        print(f"Successfully collected: {len(column_2_value_list)} subquery-cardinality pairs")
+
+        # Check if we collected enough data
+        success_rate = (len(train_sqls) - parsing_errors) / len(train_sqls) if len(train_sqls) > 0 else 0
+        if success_rate < 0.5:
+            error_msg = (
+                f"\n❌ Collection failed: Too many parsing errors ({parsing_errors}/{len(train_sqls)} queries failed)\n"
+                f"   Success rate: {success_rate:.1%}\n"
+                f"   This workload is likely incompatible with MSCN (e.g., uses CTE queries)\n"
+                f"   See docs/WORKLOAD_COMPATIBILITY.md for supported workloads"
+            )
+            print(error_msg)
+            raise RuntimeError(error_msg)
+
+        if len(column_2_value_list) == 0:
+            error_msg = (
+                f"\n❌ Collection failed: No data collected\n"
+                f"   All {len(train_sqls)} queries failed to produce subquery-cardinality pairs\n"
+                f"   Parsing errors: {parsing_errors}"
+            )
+            print(error_msg)
+            raise RuntimeError(error_msg)
+
+        print(f"✅ Collection successful (success rate: {success_rate:.1%})")
+        print(f"{'='*60}\n")
 
         return column_2_value_list, True
 
