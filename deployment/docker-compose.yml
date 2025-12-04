@@ -11,7 +11,8 @@ services:
       - postgres-data:/var/lib/postgresql/data
       - ./experiment_logs_dump.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pilotscope"]
+      # Explicitly target the created DB; default would be username (=pilotscope) which does not exist
+      test: ["CMD-SHELL", "pg_isready -U pilotscope -d PilotScopeUserData"]
       interval: 5s
       timeout: 5s
       retries: 5
