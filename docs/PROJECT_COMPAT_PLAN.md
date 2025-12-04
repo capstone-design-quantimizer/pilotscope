@@ -11,9 +11,9 @@
 
 ## 현황 문제(대표 워크로드 × PostgreSQL Anchor)
 - CTE 기반 쿼리에서 Anchor가 중첩 CTE를 잘못 파싱해 `SELECT COUNT(*) FROM ;` 등의 무효 서브쿼리를 생성 (`docs/WORKLOAD_COMPATIBILITY.md` 참조).
-- MSCN: `MscnParadigmCardAnchorHandler.py`가 무효 서브쿼리를 건너뛰고 유효분만 예측(Partial Fallback). 정확도 저하 가능.
-- Lero: `LeroPilotAdapter.py`의 `QueryMetaData`가 CTE 미지원 → Collection 1쿼리 차에서 파싱 오류.
-- Index: CTE 결과셋에 인덱스 생성 불가 → HypoPG 구문 오류.
+- MSCN: `MscnParadigmCardAnchorHandler.py`가 무효 서브쿼리를 건너뛰고 유효분만 예측(Partial Fallback). 대표 워크로드 실행은 통과하나, 현재 DB의 `market_cap`이 NULL이라 카드inality가 전부 0으로 수집되어 학습 품질이 사실상 없음(NaN).
+- Lero: CTE/무효 서브쿼리 필터 및 WindowAgg pass-through를 추가하여 representative_momentum 실행/테스트 성공(20/20). 카드inality=0 문제는 동일하게 품질을 제한.
+- Index: CTE 결과셋에 인덱스 생성 불가 → HypoPG 구문 오류. 대표 워크로드에서는 실질적 해결책이 없고 스킵/우회만 가능.
 - Knob: 쿼리 파싱 의존도가 낮아 모든 워크로드 정상 동작.
 
 ## 실행 계획
@@ -24,8 +24,8 @@
    - `MscnParadigmCardAnchorHandler.py` 필터링 로직 기준으로 테스트 케이스 보강(유효/무효 혼재).
    - `algorithm_examples/Mscn/source/mscn_utils.py` CTE 파싱 추가 변경 필요 시 보완.
 3) Lero CTE 지원
-   - `LeroPilotAdapter.py`의 `QueryMetaData._parse_table`과 alias 처리에 MSCN과 동일한 CTE 지원·밸리데이션 적용.
-   - 무효 서브쿼리 필터링을 MSCN처럼 수행, 유효분이 없을 때 PostgreSQL 추정치로 fallback 후 Collection 지속.
+   - 적용 완료: `LeroPilotAdapter.py` CTE 테이블 추출, 무효 서브쿼리 필터(빈 FROM, correlated placeholder), 유효분만 학습/테스트에 사용.
+   - 플랜 주입 시 `WindowAgg`를 pass-through로 처리(`algorithm_examples/Lero/source/utils.py`)해 예외 방지.
 4) Index Selection 우회/부분 지원
    - CTE 워크로드에서는 HypoPG 인덱스 생성을 스킵하거나 base table unfold 가능 시에만 시도. 실패 시 로그 후 계속 진행.
    - 호환성 표(`docs/WORKLOAD_COMPATIBILITY.md`)를 실제 동작 기준으로 업데이트.
@@ -49,8 +49,11 @@
 - Anchor C 코드 위치/빌드 파이프라인 확인 필요(레포 내 미포함으로 추정).
 - representative_* 쿼리는 window 함수·중첩 CTE가 많아 sqlglot/Anchor 모두 스트레스가 큼 → 추가 예외 대비 필요.
 - MLflow 로그에 fallback 비율 등 커스텀 메트릭을 넣어야 재현·비교 용이.
+- `stocks_daily_info.market_cap`가 NULL 상태라 카드inality=0만 수집됨 → MSCN/Lero 학습 품질 저하. market_cap 조건을 제거한 쿼리로 재수집/재학습 필요.
+- Index Selection은 representative_*에서 구조적으로 HypoPG 인덱스를 만들 수 없어 우회/스킵 외 실질적 해결책이 없음.
 
 ## 다음 행동 제안
-1. Lero CTE 파싱 지원부터 착수 → Collection 통과 여부 확인.
-2. Anchor C 소스 경로/빌드 방식 확인(공유 필요 시 요청).
-3. 호환성 표/문서를 실제 실행 결과로 갱신.
+1. market_cap 조건을 제외한 쿼리로 다시 수집/학습 시도(0-only 카드inality 해소 여부 확인).
+2. (옵션) MSCN/Lero 수집 단계에서 카드inality가 전부 0이면 학습을 건너뛰거나 최소값 보정 가드 추가.
+3. Index Selection은 representative_*에서 “스킵 또는 실패해도 계속 진행” 모드로 문서화.
+4. Anchor C 소스 경로/빌드 방식 확인(공유 필요 시 요청) 후 근본 수정 여부 결정.

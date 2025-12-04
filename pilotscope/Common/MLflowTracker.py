@@ -357,6 +357,20 @@ class MLflowTracker:
         except Exception as e:
             logger.error(f"Failed to log test results: {e}")
 
+    def log_metrics(self, metrics: Dict[str, float], step: Optional[int] = None):
+        """
+        Convenience wrapper to log metrics with optional step.
+        """
+        if not self._enabled or self.active_run is None:
+            return
+        try:
+            if step is not None:
+                mlflow.log_metrics(metrics, step=step)
+            else:
+                mlflow.log_metrics(metrics)
+        except Exception as e:
+            logger.warning(f"Failed to log metrics: {e}")
+
     def end_run(self, status: str = "FINISHED"):
         """
         실험 종료

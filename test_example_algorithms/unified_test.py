@@ -389,6 +389,14 @@ def run_single_test(config: PilotConfig, algo_name: str, db_name: str,
 
     # Log to MLflow if tracker exists
     if mlflow_tracker:
+        # Attach MSCN-specific skip/zero-card stats if available
+        if algo_name == "mscn" and hasattr(scheduler, "mscn_card_handler"):
+            try:
+                mscn_stats = scheduler.mscn_card_handler.get_stats()
+                test_metrics.update(mscn_stats)
+            except Exception as e:
+                print(f"⚠️  Failed to collect MSCN stats for MLflow: {e}")
+
         print(f"📊 Logging test results to MLflow...")
         mlflow_tracker.log_test_results(test_metrics, test_dataset=dataset_name, num_test_queries=len(test_sqls))
 

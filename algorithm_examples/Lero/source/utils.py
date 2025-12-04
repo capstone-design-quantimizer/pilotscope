@@ -30,8 +30,15 @@ class PlanCardReplacer():
         self.rows_array = rows_array
         self.SCAN_TYPES = SCAN_TYPES
         self.JOIN_TYPES = JOIN_TYPES
-        self.SAME_CARD_TYPES = ["Hash", "Materialize",
-                                "Sort", "Incremental Sort", "Limit"]
+        # Node types that preserve input cardinality (pass-through)
+        self.SAME_CARD_TYPES = [
+            "Hash",
+            "Materialize",
+            "Sort",
+            "Incremental Sort",
+            "Limit",
+            "WindowAgg",  # window functions do not change row count
+        ]
         self.OP_TYPES = ["Aggregate", "Bitmap Index Scan"] + \
             self.SCAN_TYPES + self.JOIN_TYPES + self.SAME_CARD_TYPES
         self.table_idx_map = {}

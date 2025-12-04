@@ -116,10 +116,19 @@ def get_mscn_preset_scheduler(config, enable_collection, enable_training, num_co
     # core
     scheduler: PilotScheduler = SchedulerFactory.create_scheduler(config)
 
+    # Helper to shorten table name within PostgreSQL identifier limit (63 chars)
+    def _shorten_table_name(name: str) -> str:
+        if len(name) <= 60:
+            return name
+        import hashlib
+        h = hashlib.md5(name.encode()).hexdigest()[:8]
+        return name[:30] + "_" + h
+
     # register a pretraining model event, which will prepare training set during init.
     if enable_collection or enable_training:
         # Use dataset_name to separate data for different workloads
-        data_table = f"mscn_pretraining_{dataset_name if dataset_name else config.db}"
+        raw_table = f"mscn_pretraining_{dataset_name if dataset_name else config.db}"
+        data_table = _shorten_table_name(raw_table)
         event = MscnPretrainingModelEvent(config, mscn_pilot_model, data_table,
                                           enable_collection=enable_collection,
                                           enable_training=enable_training,
@@ -131,7 +140,9 @@ def get_mscn_preset_scheduler(config, enable_collection, enable_training, num_co
         scheduler.register_events([event])
 
     # register a card push handler
-    scheduler.register_custom_handlers([MscnCardPushHandler(mscn_pilot_model, config)])
+    mscn_handler = MscnCardPushHandler(mscn_pilot_model, config)
+    scheduler.register_custom_handlers([mscn_handler])
+    scheduler.mscn_card_handler = mscn_handler  # expose for logging
 
     # register required data (execution time collection for test phase)
     test_data_table = "{}_test_data_table".format(model_name)

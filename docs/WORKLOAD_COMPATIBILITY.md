@@ -9,7 +9,7 @@
 | **value_investing** | ✅ | ✅ | ✅ | ✅ |
 | **momentum_investing** | ✅ | ✅ | ✅ | ✅ |
 | **ml_hybrid** | ✅ | ✅ | ✅ | ✅ |
-| **representative_momentum** | ⚠️ | ❌ | ✅ | ❌ |
+| **representative_momentum** | ⚠️ | ⚠️ | ✅ | ❌ |
 | **representative_smallcap_turnover** | ⚠️ | ❌ | ✅ | ❌ |
 | **representative_value_quality** | ⚠️ | ❌ | ✅ | ❌ |
 
@@ -17,6 +17,8 @@
 - ✅ 완전 호환
 - ⚠️ 부분 호환 (PostgreSQL Anchor 버그로 일부 subquery 무효화)
 - ❌ 비호환
+
+Lero의 경우 `representative_momentum`만 Anchor 파서를 통과하여 수집·학습·테스트가 완료되며(placeholder 필터링으로 “품질 낮음”), `representative_smallcap_turnover`/`representative_value_quality`는 Anchor가 JOIN/CTE를 깨뜨려 수집 0건으로 실패한다.
 
 ## PostgreSQL Anchor란?
 
@@ -211,7 +213,7 @@ SELECT * FROM scored WHERE momentum_score > 0.1;
 - `base`, `scored` 등은 임시 결과 집합(테이블 아님)
 - **Knob Tuning**: 완전 호환 ✅
 - **MSCN**: 부분 호환 ⚠️ (CTE 파싱 성공, PostgreSQL Anchor 버그로 일부 subquery 무효화)
-- **Lero**: 비호환 ❌ (CTE 파싱 불가, Collection 단계 실패)
+- **Lero**: 부분 호환 ⚠️ (`representative_momentum`만 placeholder 필터링으로 실행 가능하나 품질 낮음; 나머지 CTE 워크로드는 Anchor 깨짐으로 수집 0건)
 - **Index Selection**: 비호환 ❌ (CTE에 인덱스 생성 불가)
 
 ## 알고리즘 요구사항
@@ -276,7 +278,7 @@ MSCN estimates OK (1 valid, 1 skipped)
 
 **호환 워크로드**:
 - ✅ 완전 호환: `value_investing`, `momentum_investing`, `ml_hybrid`
-- ⚠️ 부분 호환: `representative_*` (CTE 워크로드)
+- ⚠️ 부분 호환: `representative_*` (CTE 워크로드, Anchor 버그로 일부 subquery 무효화)
 
 ### Lero (Learned Optimizer) 알고리즘
 
@@ -285,27 +287,18 @@ MSCN estimates OK (1 valid, 1 skipped)
 - 여러 실행 계획 비교
 - SQL 쿼리 파싱하여 테이블 및 서브쿼리 추출 (`sqlglot` 라이브러리 사용)
 
-**제약사항**:
+**제약사항 및 현황**:
 ```sql
--- ❌ 불가능: CTE를 파싱하지 못해 테이블명 추출 실패
-WITH base AS (SELECT * FROM stocks_daily_info WHERE ...)
-SELECT * FROM base;
+-- ⚠️ 부분: representative_momentum
+# placeholder/empty_from 필터링으로 수집·학습·테스트는 완료되나 품질 낮음
 
--- ✅ 가능: 직접 테이블 쿼리
-SELECT * FROM stocks_daily_info WHERE ...;
+-- ❌ 실패: representative_smallcap_turnover / representative_value_quality
+# Anchor가 JOIN/CTE를 깨서 수집 0건 → 학습 스킵 → 테스트 20/20 실패
 ```
 
-**에러 예시**:
-```
-sqlglot.errors.ParseError: Expected table name but got None. Line 1, Col: 30.
-/* () */ SELECT COUNT(*) FROM ;
-```
-
-**호환 워크로드**: `value_investing`, `momentum_investing`, `ml_hybrid`
-
-**테스트 결과**:
-- **Collection 단계: 실패** (첫 번째 쿼리부터 파싱 에러)
-- MSCN보다 더 빨리 실패 (Collection 초반에 즉시 중단)
+- **호환 워크로드(완전)**: `value_investing`, `momentum_investing`, `ml_hybrid`
+- **호환 워크로드(부분)**: `representative_momentum`
+- **비호환**: `representative_smallcap_turnover`, `representative_value_quality`
 
 ### Index Selection 알고리즘
 
@@ -347,9 +340,13 @@ LINE 1: select * from hypopg_create_index( 'create index on base (*)...
 - 쿼리 실행 계획 및 카디널리티 정보
 - 통계 데이터 수집
 
-**제약사항**: 없음 (모든 워크로드 지원)
+**제약사항**: CTE 워크로드에서 Anchor 버그 영향
+- MSCN: subquery 일부 무효화되어도 fallback으로 실행(품질 낮음)
+- Lero: `representative_momentum`만 placeholder 필터링 후 실행 가능(품질 낮음); 나머지 CTE 워크로드는 수집 0건으로 실패
 
-**호환 워크로드**: 모든 워크로드
+**호환 워크로드**:
+- ✅ 완전: `value_investing`, `momentum_investing`, `ml_hybrid`
+- ⚠️ 부분: `representative_momentum` (Lero/​MSCN 모두 품질 낮음), `representative_smallcap_turnover`, `representative_value_quality`(MSCN만 부분)
 
 ## 사용 예시
 
@@ -376,13 +373,14 @@ python unified_test.py --algo mscn --db stock_strategy --workload representative
 python unified_test.py --algo lero --db stock_strategy --workload momentum_investing --timeout 900
 ```
 
-### Lero 알고리즘 - 비호환 워크로드
+### Lero 알고리즘 - 부분/비호환 워크로드
 
 ```bash
-# ❌ 실패: CTE 기반 워크로드
+# ⚠️ 부분 성공: representative_momentum (수집/학습/테스트는 완료되나 Anchor alias 버그로 품질 낮음)
 python unified_test.py --algo lero --db stock_strategy --workload representative_momentum --timeout 900
-# Collection: 실패 (첫 번째 쿼리부터 파싱 에러)
-# 에러: Expected table name but got None (CTE를 파싱하지 못함)
+
+# ❌ 실패: representative_smallcap_turnover / representative_value_quality (Anchor가 JOIN/CTE를 깨서 수집 0건)
+python unified_test.py --algo lero --db stock_strategy --workload representative_smallcap_turnover --timeout 900
 ```
 
 ### Index 알고리즘 - 호환 워크로드
@@ -419,12 +417,13 @@ python unified_test.py --algo knob --db stock_strategy --workload representative
 - `momentum_investing`: 모멘텀 투자 전략 (가격 추세 기반)
 - `ml_hybrid`: ML 기반 하이브리드 전략
 
-**부분 호환 워크로드** (MSCN만):
-- `representative_*`: MSCN은 부분 호환 (PostgreSQL Anchor 버그로 일부 subquery 무효화)
+**부분 호환 워크로드** (MSCN + Lero momentum):
+- `representative_momentum`: MSCN/Lero 모두 부분 호환 (Anchor 버그로 일부 subquery 무효화 → 품질 낮음)
+- `representative_smallcap_turnover`, `representative_value_quality`: MSCN만 부분 호환, Lero는 수집 실패
   - 주의: 일부 성능 저하 가능 (무효 subquery는 PostgreSQL estimate 사용)
 
 **비권장 워크로드**:
-- `representative_*`: Lero/Index Selection은 완전 비호환
+- `representative_*`: Index Selection 비호환, Lero는 momentum만 부분 호환(품질 낮음)
 
 ### 복잡한 분석 쿼리 테스트 시
 
@@ -436,7 +435,7 @@ python unified_test.py --algo knob --db stock_strategy --workload representative
 **지원 알고리즘**:
 - ✅ **Knob Tuning**: 완전 호환 (쿼리 실행만 필요, 파싱 불필요)
 - ⚠️ **MSCN**: 부분 호환 (CTE 파싱 성공, PostgreSQL Anchor 버그로 일부 subquery 무효화)
-- ❌ **Lero**: 비호환 (CTE 파싱 불가, Collection 즉시 실패)
+- ⚠️ **Lero**: `representative_momentum`만 부분 호환(품질 낮음), 그 외 CTE 워크로드는 Anchor 깨짐으로 실패
 - ❌ **Index Selection**: 비호환 (CTE에 인덱스 생성 불가)
 
 ## 문제 해결
@@ -470,21 +469,17 @@ MSCN estimates OK (1 valid, 1 skipped)
 
 **완전 해결 방법**: PostgreSQL Anchor C 코드 수정 (고급, 미구현)
 
-### Lero 알고리즘이 CTE 워크로드에서 실패
+### Lero 알고리즘이 CTE 워크로드에서 부분/실패
 
-**증상**:
-```
-sqlglot.errors.ParseError: Expected table name but got None. Line 1, Col: 30.
-/* () */ SELECT COUNT(*) FROM ;
-```
+**증상**
+- `representative_momentum`: Anchor placeholder/alias 버그를 필터링하며 수집·학습·테스트는 완료되지만, 유효 서브쿼리가 적어 품질 낮음
+- `representative_smallcap_turnover`, `representative_value_quality`: Anchor가 JOIN/CTE를 깨뜨려 서브쿼리 실행 실패 → 수집 0건, 학습 스킵, 테스트 20/20 실패
 
-**원인**: Lero가 `sqlglot` 라이브러리로 CTE를 파싱하지 못해 테이블명 추출 실패
+**원인**: PostgreSQL Anchor가 중첩 CTE/JOIN을 잘못 변환하여 잘못된 서브쿼리(SQL) 생성
 
-**해결책**: 직접 테이블 쿼리 워크로드(`*_investing`, `ml_hybrid`) 사용
-
-**상세 설명**:
-- Collection 단계 초반에 즉시 실패 (첫 번째 쿼리부터 파싱 불가)
-- MSCN보다 더 빨리 실패 (MSCN은 Collection은 성공하지만 Lero는 Collection 자체가 실패)
+**해결책**:
+- CTE 워크로드는 `representative_momentum` 정도만 “성공하되 품질 낮음”으로 사용 가능
+- 나머지는 직접 테이블 워크로드(`*_investing`, `ml_hybrid`)로 대체하거나 Anchor C 코드 수정 필요
 
 ### Index 알고리즘이 CTE 워크로드에서 실패
 

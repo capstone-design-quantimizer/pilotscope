@@ -30,7 +30,15 @@ def get_lero_preset_scheduler(config, enable_collection, enable_training, num_co
     model_name = "lero_pair"
     test_data_table = "{}_test_data_table".format(model_name)
     # Use dataset_name to separate data for different workloads
-    pretraining_data_table = f"lero_pretraining_{dataset_name if dataset_name else config.db}"
+    def _shorten_table_name(name: str) -> str:
+        if len(name) <= 60:
+            return name
+        import hashlib
+        h = hashlib.md5(name.encode()).hexdigest()[:8]
+        return name[:30] + "_" + h
+
+    pretraining_data_table_raw = f"lero_pretraining_{dataset_name if dataset_name else config.db}"
+    pretraining_data_table = _shorten_table_name(pretraining_data_table_raw)
 
     data_manager = DataManager(config)
     if enable_collection: # if enable_collection, drop old data and collect new data. otherwise use old data to train.

@@ -39,6 +39,7 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
         column_2_value_list = []
         skipped_count = 0
         parsing_errors = 0  # Track parsing failures
+        execution_errors = 0  # Track subquery execution failures
         debug_printed = False  # Global flag to print first successful collection only
 
         for i, sql in enumerate(train_sqls):
@@ -82,8 +83,16 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
                     continue
 
                 # Execute the subquery (which is "SELECT COUNT(*) FROM ... WHERE ...") to get cardinality
-                self.pilot_data_interactor.pull_record()
-                sub_data: PilotTransData = self.pilot_data_interactor.execute(sub_sql)
+                try:
+                    self.pilot_data_interactor.pull_record()
+                    sub_data: PilotTransData = self.pilot_data_interactor.execute(sub_sql)
+                except Exception as e_exec:
+                    execution_errors += 1
+                    # Print first few execution errors for visibility
+                    if execution_errors <= 3:
+                        print(f"   ⚠️  Subquery execution failed: {str(e_exec)[:150]}")
+                        print(f"      Subquery: {sub_sql[:200]}...")
+                    continue
 
                 # Debug: print first successful subquery details (ANY query, not just i==0)
                 if not debug_printed and sub_data.records is not None:
@@ -114,7 +123,7 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
 
             # Print stats every 10 queries
             if (i + 1) % 10 == 0:
-                print(f"Query {i+1}/{len(self.sqls)}: subqueries={total_subqueries}, collected={collected}, skipped_correlated={skipped_correlated}, skipped_empty={skipped_empty}")
+                print(f"Query {i+1}/{len(self.sqls)}: subqueries={total_subqueries}, collected={collected}, skipped_correlated={skipped_correlated}, skipped_empty={skipped_empty}, exec_errors={execution_errors}")
 
         # Print collection summary
         print(f"\n{'='*60}")
@@ -122,6 +131,7 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
         print(f"{'='*60}")
         print(f"Total queries processed: {len(train_sqls)}")
         print(f"Parsing errors: {parsing_errors}")
+        print(f"Subquery execution errors: {execution_errors}")
         print(f"Successfully collected: {len(column_2_value_list)} subquery-cardinality pairs")
 
         # Check if we collected enough data
@@ -147,6 +157,18 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
 
         print(f"✅ Collection successful (success rate: {success_rate:.1%})")
         print(f"{'='*60}\n")
+
+        # Log collection-level metrics to MLflow (if available)
+        if self.mlflow_tracker:
+            try:
+                self.mlflow_tracker.log_metrics({
+                    "mscn_collection_parsing_errors": parsing_errors,
+                    "mscn_collection_execution_errors": execution_errors,
+                    "mscn_collection_collected_pairs": len(column_2_value_list),
+                    "mscn_collection_total_queries": len(train_sqls)
+                })
+            except Exception as e:
+                print(f"⚠️  Failed to log collection metrics: {e}")
 
         return column_2_value_list, True
 

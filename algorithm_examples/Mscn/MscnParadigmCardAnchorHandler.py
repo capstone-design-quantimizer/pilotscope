@@ -13,6 +13,12 @@ class MscnCardPushHandler(CardPushHandler):
         self.mscn_model = model
         self.config = config
         self.data_interactor = PilotDataInteractor(config)
+        # Stats for logging/fallback tracking
+        self.total_subqueries = 0
+        self.valid_subqueries = 0
+        self.skipped_empty_from = 0
+        self.skipped_placeholder = 0
+        self.zero_card_count = 0
 
     def acquire_injected_data(self, sql):
         self.data_interactor.pull_subquery_card()
@@ -27,16 +33,24 @@ class MscnCardPushHandler(CardPushHandler):
         valid_subqueries = []
         invalid_subqueries = []
 
+        # Update counters
+        self.total_subqueries += len(subquery_2_card)
+        self.zero_card_count += sum(1 for v in subquery_2_card.values() if float(v) == 0.0)
+
         for sq in subquery_2_card.keys():
             # Skip empty FROM clause (e.g., "SELECT COUNT(*) FROM ;")
             if re.search(r'FROM\s*[;)]', sq):
                 invalid_subqueries.append(sq)
+                self.skipped_empty_from += 1
                 continue
             # Skip correlated subquery placeholders (e.g., "/* sdi.ticker */")
             if re.search(r'/\*\s*\w+\.\w+\s*\*/', sq):
                 invalid_subqueries.append(sq)
+                self.skipped_placeholder += 1
                 continue
             valid_subqueries.append(sq)
+
+        self.valid_subqueries += len(valid_subqueries)
 
         # If no valid subqueries, fall back to PostgreSQL estimates for all
         if not valid_subqueries:
@@ -63,8 +77,8 @@ class MscnCardPushHandler(CardPushHandler):
             # These indicate the query is fundamentally incompatible
             error_str = str(e).lower()
             if "cte" in error_str or "parsing failed" in error_str:
-                print(f"❌ MSCN prediction failed (query incompatible): {str(e)[:150]}")
-                raise  # Re-raise to fail the query
+                print(f"⚠️  MSCN prediction failed (parsing) - using PostgreSQL fallback: {str(e)[:150]}")
+                new_subquery_2_card = subquery_2_card
             else:
                 # Other ValueErrors might be recoverable, fall back to PostgreSQL estimates
                 print(f"⚠️  MSCN prediction error (using PostgreSQL fallback): {str(e)[:150]}")
@@ -73,10 +87,20 @@ class MscnCardPushHandler(CardPushHandler):
             # Check if this is a parsing error (sqlglot.errors.ParseError or similar)
             error_str = str(e).lower()
             if any(keyword in error_str for keyword in ["expected table", "parse", "parsing", "cte", "syntax error"]):
-                print(f"❌ MSCN prediction failed (parsing error): {str(e)[:150]}")
-                raise  # Re-raise to fail the query
+                print(f"⚠️  MSCN prediction failed (parsing) - using PostgreSQL fallback: {str(e)[:150]}")
+                new_subquery_2_card = subquery_2_card
             else:
                 # For other exceptions, fall back to PostgreSQL estimates
                 print(f"⚠️  MSCN prediction error (using PostgreSQL fallback): {str(e)[:150]}")
                 new_subquery_2_card = subquery_2_card
         return new_subquery_2_card
+
+    def get_stats(self):
+        """Return aggregated filtering/zero-cardinality stats for logging."""
+        return {
+            "mscn_total_subqueries": self.total_subqueries,
+            "mscn_valid_subqueries": self.valid_subqueries,
+            "mscn_skipped_empty_from": self.skipped_empty_from,
+            "mscn_skipped_placeholder": self.skipped_placeholder,
+            "mscn_zero_cardinality": self.zero_card_count,
+        }

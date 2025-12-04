@@ -61,37 +61,75 @@ class LeroPretrainingModelEvent(PretrainingModelEvent):
         self.load_sql()
 
         column_2_value_list = []
+        parsing_errors = 0
+        execution_errors = 0
         if self.num_collection > 0:
             train_sqls = self.sqls[:self.num_collection]
         else:
             train_sqls = self.sqls
         for i, sql in enumerate(train_sqls):
             print("current is {}-th sql, and total sqls is {}".format(i, len(train_sqls)))
-            self.pilot_data_interactor.pull_subquery_card()
-            data: PilotTransData = self.pilot_data_interactor.execute(sql)
-            if data is None:
+            try:
+                self.pilot_data_interactor.pull_subquery_card()
+                data: PilotTransData = self.pilot_data_interactor.execute(sql)
+            except Exception as e:
+                parsing_errors += 1
+                if parsing_errors <= 3:
+                    print(f"❌ Query {i} collection failed: {str(e)[:150]}")
                 continue
+
+            if data is None:
+                execution_errors += 1
+                continue
+
             subquery_2_card = data.subquery_2_card
-            cards_picker = CardsPickerModel(subquery_2_card.keys(), subquery_2_card.values())
+            try:
+                cards_picker = CardsPickerModel(subquery_2_card.keys(), subquery_2_card.values())
+            except Exception as e:
+                execution_errors += 1
+                if execution_errors <= 3:
+                    print(f"⚠️  CardsPicker init failed: {str(e)[:150]}")
+                continue
+
             scale_subquery_2_card = subquery_2_card
             finish = False
             while(not finish):
                 column_2_value = {}
-                self.pilot_data_interactor.push_card(scale_subquery_2_card)
-                self.pilot_data_interactor.pull_physical_plan()
-                self.pilot_data_interactor.pull_execution_time()
-                data: PilotTransData = self.pilot_data_interactor.execute(sql)
-                if data is None:
-                    print(f"Warning: timeout in collecting data. {i}-th sql skiped. Try to enlarge 'timeout' in config to collect.")
+                try:
+                    self.pilot_data_interactor.push_card(scale_subquery_2_card)
+                    self.pilot_data_interactor.pull_physical_plan()
+                    self.pilot_data_interactor.pull_execution_time()
+                    data: PilotTransData = self.pilot_data_interactor.execute(sql)
+                    if data is None:
+                        execution_errors += 1
+                        print(f"Warning: timeout in collecting data. {i}-th sql skipped. Try to enlarge 'timeout'.")
+                        break
+                    plan = data.physical_plan
+                    cards_picker.replace(plan)
+                    column_2_value["sql"] = sql
+                    column_2_value["plan"] = plan
+                    column_2_value["time"] = data.execution_time
+                    finish, new_cards = cards_picker.get_cards()
+                    scale_subquery_2_card = {sq : new_card for sq, new_card in zip(subquery_2_card.keys(), new_cards)}
+                    column_2_value_list.append(column_2_value)
+                except Exception as e_exec:
+                    execution_errors += 1
+                    if execution_errors <= 3:
+                        print(f"⚠️  Lero subquery/plan execution failed: {str(e_exec)[:150]}")
                     break
-                plan = data.physical_plan
-                cards_picker.replace(plan)
-                column_2_value["sql"] = sql
-                column_2_value["plan"] = plan
-                column_2_value["time"] = data.execution_time
-                finish, new_cards = cards_picker.get_cards()
-                scale_subquery_2_card = {sq : new_card for sq, new_card in zip(subquery_2_card.keys(), new_cards)}
-                column_2_value_list.append(column_2_value)
+
+        # Log collection-level metrics
+        if self.mlflow_tracker:
+            try:
+                self.mlflow_tracker.log_metrics({
+                    "lero_collection_parsing_errors": parsing_errors,
+                    "lero_collection_execution_errors": execution_errors,
+                    "lero_collection_collected_pairs": len(column_2_value_list),
+                    "lero_collection_total_queries": len(train_sqls)
+                })
+            except Exception as e:
+                print(f"⚠️  Failed to log Lero collection metrics: {e}")
+
         return column_2_value_list, True
 
     def custom_model_training(self, bind_pilot_model, db_controller: BaseDBController,
