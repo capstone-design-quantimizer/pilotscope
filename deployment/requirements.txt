@@ -1,0 +1,6 @@
+# 배포용 최소 의존성
+fastapi>=0.100.0
+uvicorn>=0.20.0
+psycopg2-binary>=2.9.0
+pydantic>=2.0.0
+python-multipart
