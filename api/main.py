@@ -50,12 +50,10 @@ PilotScope 실험 결과를 조회하고 관리하는 읽기 전용 API입니다
 - ✏️ 실험 이름 변경
 
 ### 사용 가능한 알고리즘
-- **mscn**: MSCN (카디널리티 추정)
-- **lero**: Lero (학습 기반 옵티마이저)
-- **llamatune**: LlamaTune - SMAC (Knob Tuning)
-- **knob**: Knob Tuning
-- **index**: Index Selection
 - **baseline**: PostgreSQL 기본
+- **lero**: Lero (실행계획 최적화)
+- **llamatune**: LlamaTune - SMAC (Knob Tuning)
+- **mscn**: MSCN (카디널리티 추정)
     """,
     contact={
         "name": "PilotScope Team",
@@ -112,21 +110,26 @@ def root():
             "content": {
                 "application/json": {
                     "example": {
-                        "total": 70,
+                        "total": 35,
                         "limit": 50,
                         "offset": 0,
                         "experiments": [
                             {
-                                "id": 1,
-                                "experiment_name": "MSCN 카디널리티 추정",
-                                "run_id": "abc123",
-                                "run_name": "mscn_stats_tiny_20250104_153022",
-                                "algorithm": "mscn",
-                                "algorithm_display": "MSCN (카디널리티)",
-                                "dataset": "stats_tiny",
-                                "dataset_display": "통계 DB (Small)",
+                                "id": 297,
+                                "experiment_name": None,
+                                "run_id": "dfcac42e49584984be74230d72e04d25",
+                                "run_name": "knob_tuning_stock_strategy_representative_value_quality_20251125_194527",
+                                "algorithm": "llamatune",
+                                "algorithm_display": "LlamaTune - SMAC (Knob)",
+                                "dataset": "stock_strategy",
+                                "dataset_display": "Stock Strategy",
+                                "workload": "representative_value_quality",
+                                "workload_display": "Representative - Value Quality",
                                 "status": "FINISHED",
-                                "execution_time": 123.45
+                                "execution_time": 0.12,
+                                "average_time": 0.006,
+                                "started_at": "2025-11-25T19:45:27.435000",
+                                "completed_at": "2025-11-25T19:47:02.933000"
                             }
                         ]
                     }
@@ -137,8 +140,8 @@ def root():
     }
 )
 def list_experiments(
-    algorithm: Optional[str] = Query(None, description="알고리즘 필터", example="mscn"),
-    dataset: Optional[str] = Query(None, description="데이터셋 필터", example="stats_tiny"),
+    algorithm: Optional[str] = Query(None, description="알고리즘 필터", example="llamatune"),
+    dataset: Optional[str] = Query(None, description="데이터셋 필터", example="stock_strategy"),
     status: Optional[str] = Query(None, description="상태 필터 (FINISHED, FAILED, RUNNING)", example="FINISHED"),
     limit: int = Query(50, ge=1, le=500, description="페이지 크기"),
     offset: int = Query(0, ge=0, description="페이지 오프셋"),
