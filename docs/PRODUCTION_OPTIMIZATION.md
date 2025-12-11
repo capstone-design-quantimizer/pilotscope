@@ -98,8 +98,11 @@ python unified_test.py --algo mscn --db production \
     --training-size 500 \
     --collection-size 500
 
-# 결과 비교
-python unified_test.py --algo baseline mscn --db production --compare
+# 여러 알고리즘 실행 (결과는 MLflow에 자동 저장)
+python unified_test.py --algo baseline --db production
+python unified_test.py --algo mscn --db production
+
+# MLflow UI에서 결과 비교: http://localhost:54321
 ```
 
 #### Step 5: 결과 분석 (10분)
@@ -287,11 +290,12 @@ python algorithm_examples/config_sweep.py \
 #### 이미 구현됨: unified_test.py
 
 ```bash
-# 여러 알고리즘과 데이터셋을 한 번에 테스트
-python unified_test.py \
-    --algo baseline mscn lero \
-    --db stats_tiny production \
-    --compare
+# 여러 알고리즘 개별 실행 (결과는 MLflow에 자동 저장)
+python unified_test.py --algo baseline --db production
+python unified_test.py --algo mscn --db production
+python unified_test.py --algo lero --db production --timeout 900
+
+# MLflow UI에서 결과 비교: http://localhost:54321
 ```
 
 #### JSON Config 기반 테스트
@@ -405,13 +409,12 @@ class MscnPretrainingModelEvent(PretrainingModelEvent):
 ### 여러 알고리즘 비교
 
 ```bash
-# Baseline, MSCN, Lero 모두 테스트
-python unified_test.py \
-    --algo baseline mscn lero \
-    --db production \
-    --compare \
-    --epochs 100 \
-    --training-size 1000
+# Baseline, MSCN, Lero 개별 실행 (결과는 MLflow에 자동 저장)
+python unified_test.py --algo baseline --db production
+python unified_test.py --algo mscn --db production --epochs 100 --training-size 1000
+python unified_test.py --algo lero --db production --epochs 100 --training-size 1000 --timeout 900
+
+# MLflow UI에서 결과 비교: http://localhost:54321
 ```
 
 ### Cross-Dataset Training

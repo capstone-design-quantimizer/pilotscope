@@ -1,0 +1,41 @@
+services:
+  # PostgreSQL (가벼운 alpine 이미지)
+  postgres:
+    image: postgres:15-alpine
+    container_name: pilotscope-db
+    environment:
+      POSTGRES_USER: pilotscope
+      POSTGRES_PASSWORD: pilotscope
+      POSTGRES_DB: PilotScopeUserData
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./experiment_logs_dump.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      # Explicitly target the created DB; default would be username (=pilotscope) which does not exist
+      test: ["CMD-SHELL", "pg_isready -U pilotscope -d PilotScopeUserData"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # FastAPI 서버
+  api:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+    container_name: pilotscope-api
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: PilotScopeUserData
+      DB_USER: pilotscope
+      DB_PASSWORD: pilotscope
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres-data:

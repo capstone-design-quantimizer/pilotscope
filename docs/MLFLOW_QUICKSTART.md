@@ -75,11 +75,14 @@ python unified_test.py --algo mscn --db stats_tiny --no-training
 ```
 
 ### 여러 알고리즘 비교
-```python
-# 여러 알고리즘 한 번에 테스트
-python unified_test.py --algo baseline mscn lero --db stats_tiny --compare
+```bash
+# 여러 알고리즘 개별 실행 (결과는 MLflow에 자동 저장)
+python unified_test.py --algo baseline --db stats_tiny
+python unified_test.py --algo mscn --db stats_tiny
+python unified_test.py --algo lero --db stats_tiny --timeout 900
 
-# MLflow UI에서 시각적으로 비교 가능
+# MLflow UI에서 시각적으로 비교
+# 브라우저: http://localhost:54321
 ```
 
 ## 디렉토리 구조

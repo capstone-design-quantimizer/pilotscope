@@ -107,15 +107,19 @@ def load_test_sql(db):
 ```bash
 cd test_example_algorithms
 
-# 단일 알고리즘 테스트
+# 단일 알고리즘 테스트 (결과는 MLflow에 자동 저장)
 python unified_test.py --algo mscn --db yourdataset
 
-# 여러 알고리즘 비교
-python unified_test.py --algo baseline mscn lero --db yourdataset --compare
+# 여러 알고리즘 개별 실행
+python unified_test.py --algo baseline --db yourdataset
+python unified_test.py --algo mscn --db yourdataset
+python unified_test.py --algo lero --db yourdataset --timeout 900
 
 # 학습 파라미터 조정
 python unified_test.py --algo mscn --db yourdataset \
     --epochs 100 --training-size 500 --collection-size 500
+
+# MLflow UI에서 결과 비교: http://localhost:54321
 ```
 
 ## 커스텀 워크로드 사용
@@ -292,11 +296,14 @@ python scripts/extract_queries_from_log.py \
 # 4. Baseline 성능 측정
 python unified_test.py --algo baseline --db yourdataset
 
-# 5. 알고리즘 비교
-python unified_test.py --algo baseline mscn lero --db yourdataset --compare
+# 5. 여러 알고리즘 실행 (각각 MLflow에 자동 저장)
+python unified_test.py --algo baseline --db yourdataset
+python unified_test.py --algo mscn --db yourdataset
+python unified_test.py --algo lero --db yourdataset --timeout 900
 
-# 6. MLflow에서 결과 확인
-mlflow ui --backend-store-uri sqlite:///mlflow.db
+# 6. MLflow UI에서 결과 비교
+# 브라우저: http://localhost:54321
+# 또는 컨테이너 내: mlflow ui --backend-store-uri sqlite:///mlflow.db
 ```
 
 ### 워크플로우 2: 워크로드별 최적화

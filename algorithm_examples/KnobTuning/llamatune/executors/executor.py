@@ -321,30 +321,85 @@ class SysmlExecutor(ExecutorInterface):
 
     def evaluate_configuration(self, dbms_info, benchmark_info):
         with open(self.sqls_file_path, "r") as f:
-            sqls = f.readlines()
+            # Filter out empty lines and strip whitespace
+            sqls = [line.strip() for line in f.readlines() if line.strip()]
+
+        # 쿼리 실행 통계 초기화
+        query_stats = {
+            'total': len(sqls),
+            'success': 0,
+            'timeout': 0,
+            'error': 0,
+            'execution_times': []
+        }
+
+        print(f"\n{'='*60}")
+        print(f"🔧 Knob Tuning: Evaluating configuration")
+        print(f"{'='*60}")
+        print(f"📊 Total queries: {len(sqls)}")
+        print(f"📝 First query preview: {sqls[0][:100]}..." if len(sqls[0]) > 100 else f"📝 First query: {sqls[0]}")
+        print(f"{'='*60}\n")
+
         try:
             self.data_interactor.push_knob(dbms_info["config"])
             self.data_interactor.pull_execution_time()
             # first sql: set knob and exec
             accu_execution_time = 0
             execution_times = []
+
+            print(f"⏱️  Executing query 1/{len(sqls)}...")
             data = self.data_interactor.execute(sqls[0], is_reset=True)
             if data is None or data.execution_time is None:
+                print(f"   ❌ Query 1 timed out")
+                query_stats['timeout'] += 1
                 raise TimeoutError
             else:
-                execution_times.append(data.execution_time)
-                accu_execution_time += data.execution_time
+                exec_time = data.execution_time
+                execution_times.append(exec_time)
+                accu_execution_time += exec_time
+                query_stats['success'] += 1
+                query_stats['execution_times'].append(exec_time)
+                print(f"   ✅ Query 1 completed: {exec_time:.3f}s")
+
             # the latter sql: use previous knob and exec
             self.data_interactor.pull_execution_time()
-            for i, sql in enumerate(sqls[1:]):
-                data = self.data_interactor.execute(sql, is_reset=(i == len(sqls) - 1))
+            for i, sql in enumerate(sqls[1:], start=2):
+                if i % 10 == 0 or i == len(sqls):
+                    print(f"⏱️  Progress: {i}/{len(sqls)} queries")
+
+                data = self.data_interactor.execute(sql, is_reset=(i == len(sqls)))
                 if data is None or data.execution_time is None:
+                    query_stats['timeout'] += 1
+                    if i % 10 == 0 or i == len(sqls):
+                        print(f"   ⚠️  Query {i} timed out")
                     raise TimeoutError
                     execution_times.append(self.db_controller.config.once_request_timeout)
                     accu_execution_time += self.db_controller.config.once_request_timeout
                 else:
-                    execution_times.append(data.execution_time)
-                    accu_execution_time += data.execution_time
+                    exec_time = data.execution_time
+                    execution_times.append(exec_time)
+                    accu_execution_time += exec_time
+                    query_stats['success'] += 1
+                    query_stats['execution_times'].append(exec_time)
+                    if i % 10 == 0 or i == len(sqls):
+                        print(f"   ✅ Query {i} completed: {exec_time:.3f}s")
+
+            # 통계 출력
+            print(f"\n{'='*60}")
+            print(f"📈 Execution Statistics")
+            print(f"{'='*60}")
+            print(f"✅ Successful: {query_stats['success']}/{query_stats['total']}")
+            print(f"❌ Timeouts: {query_stats['timeout']}/{query_stats['total']}")
+            if query_stats['execution_times']:
+                avg_time = sum(query_stats['execution_times']) / len(query_stats['execution_times'])
+                min_time = min(query_stats['execution_times'])
+                max_time = max(query_stats['execution_times'])
+                print(f"⏱️  Avg execution time: {avg_time:.3f}s")
+                print(f"⏱️  Min/Max: {min_time:.3f}s / {max_time:.3f}s")
+            print(f"⏱️  Total runtime: {accu_execution_time:.3f}s")
+            print(f"📊 Throughput: {len(sqls) / accu_execution_time:.2f} queries/sec")
+            print(f"{'='*60}\n")
+
             perf = {"latency": sorted(execution_times)[int(0.95 * len(sqls))], "runtime": accu_execution_time,
                     "throughput": len(sqls) / accu_execution_time}
             if not self.parse_metrics:

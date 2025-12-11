@@ -59,9 +59,53 @@ if [ -f "/home/pilotscope/workspace/requirements.txt" ]; then
     fi
 fi
 
+# Start MLflow UI in background
+echo "Starting MLflow UI..."
+MLFLOW_PORT=5000
+MLRUNS_DIR="/home/pilotscope/workspace/mlruns"
+
+# Create mlruns directory if it doesn't exist
+mkdir -p "$MLRUNS_DIR"
+
+# Start MLflow UI in background with logging
+nohup mlflow ui \
+    --backend-store-uri "file://$MLRUNS_DIR" \
+    --host 0.0.0.0 \
+    --port "$MLFLOW_PORT" \
+    > /home/pilotscope/mlflow-ui.log 2>&1 &
+
+# Wait a moment to check if MLflow started successfully
+sleep 2
+if pgrep -f "mlflow ui" > /dev/null; then
+    echo "MLflow UI started successfully!"
+else
+    echo "Warning: MLflow UI may have failed to start. Check /home/pilotscope/mlflow-ui.log"
+fi
+
+# Start Experiment API server in background
+echo "Starting Experiment API server..."
+API_PORT=8000
+API_LOG="/home/pilotscope/experiment-api.log"
+
+# Start FastAPI server in background
+nohup python -m uvicorn api.main:app \
+    --host 0.0.0.0 \
+    --port "$API_PORT" \
+    > "$API_LOG" 2>&1 &
+
+# Wait a moment to check if API started successfully
+sleep 2
+if pgrep -f "uvicorn api.main:app" > /dev/null; then
+    echo "Experiment API started successfully!"
+else
+    echo "Warning: Experiment API may have failed to start. Check $API_LOG"
+fi
+
 echo "========================================"
 echo "Environment ready!"
 echo "PostgreSQL: localhost:5432"
+echo "MLflow UI: http://localhost:5000 (container) or http://localhost:54321 (host)"
+echo "Experiment API: http://localhost:8000 (container/host)"
 echo "SSH: localhost:54023 (user: pilotscope, password: pilotscope)"
 echo "Conda env: pilotscope"
 echo "Working directory: $(pwd)"

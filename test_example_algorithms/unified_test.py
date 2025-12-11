@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
 """
 통합 테스트 프레임워크 - 여러 알고리즘과 데이터셋을 쉽게 조합하여 테스트
+모든 결과는 MLflow에 자동으로 로깅됩니다.
 
 사용법:
-    # 여러 알고리즘과 데이터셋 조합 테스트
-    python unified_test.py --algo mscn lero baseline --db stats_tiny production --compare
+    # 단일 알고리즘 테스트
+    python unified_test.py --algo mscn --db stats_tiny
 
     # JSON config 파일로 실행
     python unified_test.py --config test_configs/production_experiment.json
 
-    # 특정 조합만 테스트
-    python unified_test.py --algo mscn --db production --epochs 100 --training-size 500
+    # 파라미터 조정
+    python unified_test.py --algo mscn --db stats_tiny --epochs 100 --training-size 500
+
+    # 기존 모델 로드 (학습 없이)
+    python unified_test.py --algo mscn --db stats_tiny --no-training
+
+    # MLflow UI에서 결과 확인 (브라우저: http://localhost:54321)
 """
 
 import sys
@@ -56,10 +62,10 @@ ALGORITHM_REGISTRY = {
         "name": "MSCN (Cardinality Estimation)",
         "factory": get_mscn_preset_scheduler,
         "default_params": {
-            "enable_collection": False,
+            "enable_collection": True,  # 기본값: 항상 collection 수행 (--no-collection으로 비활성화)
             "enable_training": True,
-            "num_collection": -1,  # 각 SQL를 직접 수행해 (SQL, Cardinality) GT를 먼저 구함
-            "num_training": -1, # collection 중 일부를 활용
+            "num_collection": 100,  # 기본 collection 크기 (빠른 테스트용, -1로 전체 수집 가능)
+            "num_training": -1, # collection 중 일부를 활용 (-1: 전체 사용)
             "num_epoch": 100
         }
     },
@@ -67,9 +73,9 @@ ALGORITHM_REGISTRY = {
         "name": "Lero (Learned Optimizer)",
         "factory": get_lero_preset_scheduler,
         "default_params": {
-            "enable_collection": False,
+            "enable_collection": True,  # 기본값: 항상 collection 수행 (--no-collection으로 비활성화)
             "enable_training": True,
-            "num_collection": 100,  # 각 SQL를 여러 cardinality별로 직접 수행해 (SQL, Plans) GT를 먼저 구함
+            "num_collection": 100,  # 기본 collection 크기 (빠른 테스트용, -1로 전체 수집 가능)
             "num_training": 500,  # Plan 개수 (training SQL 보다 많음)
             "num_epoch": 100
         }
@@ -165,14 +171,42 @@ def run_single_test(config: PilotConfig, algo_name: str, db_name: str,
 
     # 스케줄러 생성 (MLflow 지원 알고리즘은 (scheduler, tracker) 튜플 반환)
     factory = algo_info["factory"]
-    result = factory(config, **params)
+    mlflow_tracker = None
 
-    # Handle return value (tuple for MLflow-enabled algorithms, scheduler only for others)
-    if isinstance(result, tuple):
-        scheduler, mlflow_tracker = result
-    else:
-        scheduler = result
-        mlflow_tracker = None
+    try:
+        result = factory(config, **params)
+
+        # Handle return value (tuple for MLflow-enabled algorithms, scheduler only for others)
+        if isinstance(result, tuple):
+            scheduler, mlflow_tracker = result
+        else:
+            scheduler = result
+            mlflow_tracker = None
+
+    except Exception as e:
+        print(f"\n❌ Error during scheduler initialization (collection/training phase):")
+        print(f"   {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+        # End MLflow run if it was started
+        if mlflow_tracker:
+            print(f"\n📊 Marking MLflow run as FAILED due to collection/training error")
+            mlflow_tracker.end_run(status="FAILED")
+
+        # Return early - skip test phase
+        print(f"\n⏭️  Skipping test phase due to collection/training failure")
+        return {
+            "algorithm": algo_name,
+            "database": db_name,
+            "workload": workload_name or "default",
+            "dataset": dataset_name,
+            "elapsed_time": 0,
+            "params": algo_params,
+            "mlflow_run_id": None,
+            "skipped": "collection_failed",
+            "error": str(e)
+        }
 
     # Backup initial DB state for all algorithms (enables safe cleanup later)
     # Even if algorithm doesn't modify config/indexes, backup is harmless
@@ -230,25 +264,44 @@ def run_single_test(config: PilotConfig, algo_name: str, db_name: str,
         print(f"❌ Failed to load test queries: {e}")
         return None
 
+    # 쿼리 실행 통계 초기화
+    query_stats = {
+        'total': len(test_sqls),
+        'success': 0,
+        'failed': 0,
+        'db_execution_times': []
+    }
+
     # 쿼리 실행
-    print(f"\n🚀 Running {len(test_sqls)} queries...")
+    print(f"\n{'='*60}")
+    print(f"🧪 Test Phase: Running {len(test_sqls)} test queries")
+    print(f"{'='*60}")
+    print(f"📊 Algorithm: {algo_name.upper()}")
+    print(f"📊 Dataset: {dataset_name}")
+    if test_sqls:
+        sql_preview = test_sqls[0][:100] if len(test_sqls[0]) > 100 else test_sqls[0]
+        print(f"📝 First query preview: {sql_preview}...")
+    print(f"{'='*60}\n")
+
     start_time = time.time()
-    
+
     # 실제 DB 쿼리 실행 시간 추적 (AI 모델 추론 시간 제외)
     total_db_execution_time = 0.0
-    
+
     try:
         for i, sql in enumerate(test_sqls):
-            if i % 10 == 0:
-                print(f"   Progress: {i}/{len(test_sqls)} queries")
-            
+            query_num = i + 1
+            if query_num == 1 or query_num % 10 == 0 or query_num == len(test_sqls):
+                print(f"⏱️  Executing query {query_num}/{len(test_sqls)}...")
+
             try:
                 # Python 레벨 시간 측정 (전체 오버헤드 포함)
                 TimeStatistic.start(algo_name.capitalize())
                 result = scheduler.execute(sql)
                 TimeStatistic.end(algo_name.capitalize())
-                
+
                 # 실제 DB 실행 시간 추출 (pull_execution_time=True로 수집된 데이터)
+                exec_time = None
                 if hasattr(scheduler, 'last_execution_data'):
                     exec_data = scheduler.last_execution_data
                     if exec_data is not None and hasattr(exec_data, 'execution_time') and exec_data.execution_time is not None:
@@ -258,8 +311,19 @@ def run_single_test(config: PilotConfig, algo_name: str, db_name: str,
                         if exec_time > 1000:  # 1000ms 이상이면 밀리초로 간주
                             exec_time = exec_time / 1000.0
                         total_db_execution_time += exec_time
+                        query_stats['db_execution_times'].append(exec_time)
+
+                query_stats['success'] += 1
+
+                if query_num == 1 or query_num % 10 == 0 or query_num == len(test_sqls):
+                    if exec_time is not None:
+                        print(f"   ✅ Query {query_num} completed: {exec_time:.3f}s")
+                    else:
+                        print(f"   ✅ Query {query_num} completed (time not tracked)")
+
             except Exception as e:
-                print(f"⚠️  Query {i} failed: {e}")
+                query_stats['failed'] += 1
+                print(f"   ❌ Query {query_num} failed: {str(e)[:100]}")
     finally:
         # 스케줄러/인터랙터 리소스 정리
         print(f"\n🧹 Cleaning up resources for {algo_name}...")
@@ -281,18 +345,38 @@ def run_single_test(config: PilotConfig, algo_name: str, db_name: str,
     end_time = time.time()
     elapsed = end_time - start_time
 
-    # 결과 저장
-    print(f"\n💾 Saving results...")
-    name_2_value = TimeStatistic.get_sum_data()
+    # 통계 출력
+    print(f"\n{'='*60}")
+    print(f"📈 Test Execution Statistics")
+    print(f"{'='*60}")
+    print(f"✅ Successful: {query_stats['success']}/{query_stats['total']}")
+    print(f"❌ Failed: {query_stats['failed']}/{query_stats['total']}")
 
-    # 순수 DB 실행 시간 정보 출력
-    print(f"\n⏱️  Timing breakdown:")
-    print(f"   Total wall time: {elapsed:.3f}s (Python 레벨, 모든 오버헤드 포함)")
+    if query_stats['db_execution_times']:
+        avg_time = sum(query_stats['db_execution_times']) / len(query_stats['db_execution_times'])
+        min_time = min(query_stats['db_execution_times'])
+        max_time = max(query_stats['db_execution_times'])
+        print(f"\n⏱️  DB Execution Time Statistics:")
+        print(f"   Average: {avg_time:.3f}s")
+        print(f"   Min/Max: {min_time:.3f}s / {max_time:.3f}s")
+        print(f"   Total DB time: {total_db_execution_time:.3f}s")
+
+    print(f"\n⏱️  Wall Time Statistics:")
+    print(f"   Total wall time: {elapsed:.3f}s (Python + DB + AI)")
     if total_db_execution_time > 0:
-        print(f"   DB execution time: {total_db_execution_time:.3f}s (순수 쿼리 실행 시간)")
-        print(f"   Overhead: {elapsed - total_db_execution_time:.3f}s (AI 추론 + 데이터 수집)")
+        overhead = elapsed - total_db_execution_time
+        print(f"   Overhead: {overhead:.3f}s (AI 추론 + 데이터 수집)")
+        print(f"   DB execution %: {(total_db_execution_time/elapsed)*100:.1f}%")
     else:
-        print(f"   DB execution time: N/A (execution_time not collected)")
+        print(f"   ⚠️  DB execution time not tracked")
+
+    if query_stats['success'] > 0:
+        print(f"\n📊 Throughput: {query_stats['success'] / elapsed:.2f} queries/sec")
+    print(f"{'='*60}\n")
+
+    # 결과 저장
+    print(f"💾 Saving results...")
+    name_2_value = TimeStatistic.get_sum_data()
 
     # Prepare metrics
     test_metrics = {
@@ -305,6 +389,14 @@ def run_single_test(config: PilotConfig, algo_name: str, db_name: str,
 
     # Log to MLflow if tracker exists
     if mlflow_tracker:
+        # Attach MSCN-specific skip/zero-card stats if available
+        if algo_name == "mscn" and hasattr(scheduler, "mscn_card_handler"):
+            try:
+                mscn_stats = scheduler.mscn_card_handler.get_stats()
+                test_metrics.update(mscn_stats)
+            except Exception as e:
+                print(f"⚠️  Failed to collect MSCN stats for MLflow: {e}")
+
         print(f"📊 Logging test results to MLflow...")
         mlflow_tracker.log_test_results(test_metrics, test_dataset=dataset_name, num_test_queries=len(test_sqls))
 
@@ -325,8 +417,17 @@ def run_single_test(config: PilotConfig, algo_name: str, db_name: str,
 
         # End MLflow run (save run_id before it's cleared)
         run_id = mlflow_tracker.run_id
-        mlflow_tracker.end_run(status="FINISHED")
-        print(f"   ✓ MLflow run completed: {run_id}")
+
+        # Determine run status based on success rate
+        success_rate = query_stats['success'] / query_stats['total'] if query_stats['total'] > 0 else 0
+        if success_rate < 0.5:
+            mlflow_status = "FAILED"
+            print(f"   ⚠️  Low success rate: {success_rate:.1%} - marking run as FAILED")
+        else:
+            mlflow_status = "FINISHED"
+
+        mlflow_tracker.end_run(status=mlflow_status)
+        print(f"   ✓ MLflow run completed: {run_id} (status: {mlflow_status})")
 
     print(f"\n✅ Test completed in {elapsed:.2f}s")
 
@@ -512,14 +613,14 @@ Examples:
     
     # Algorithm parameters
     parser.add_argument('--epochs', type=int, help='Number of training epochs')
-    parser.add_argument('--training-size', type=int, 
+    parser.add_argument('--training-size', type=int,
                        help='Number of queries to use for training (-1 for all)')
     parser.add_argument('--collection-size', type=int,
-                       help='Number of queries to collect for training (-1 for all)')
+                       help='Number of queries to collect for training (default: 100, -1 for all)')
     parser.add_argument('--no-collection', action='store_true',
-                       help='Disable data collection (use existing data)')
+                       help='Skip data collection (use existing collected data)')
     parser.add_argument('--no-training', action='store_true',
-                       help='Disable model training (use existing model)')
+                       help='Skip model training (only collect data)')
 
     # DB Config
     parser.add_argument('--db-host', help='Database host')
@@ -565,8 +666,7 @@ Examples:
         params['num_training'] = args.training_size
     if args.collection_size is not None:
         params['num_collection'] = args.collection_size
-        # Automatically enable collection when collection size is specified
-        params['enable_collection'] = True
+    # Collection은 기본값으로 활성화되어 있음 (--no-collection으로 비활성화)
     if args.no_collection:
         params['enable_collection'] = False
     if args.no_training:

@@ -102,3 +102,54 @@ class StockStrategyMLHybridDataset(StockStrategyDataset):
 
     def __init__(self, use_db_type: DatabaseEnum, created_db_name="stock_strategy", data_dir=None) -> None:
         super().__init__(use_db_type, created_db_name, data_dir)
+
+
+class StockStrategyRepresentativeMomentumDataset(StockStrategyDataset):
+    """
+    Stock strategy dataset with Representative Momentum workload.
+    Focuses on momentum-based scoring with standardized metrics (z-scores).
+
+    Usage:
+        --db stock_strategy --workload representative_momentum
+
+    Database: 'stock_strategy' (shared with all workloads)
+    """
+    train_sql_file = "stock_strategy_representative_momentum_train.txt"
+    test_sql_file = "stock_strategy_representative_momentum_test.txt"
+
+    def __init__(self, use_db_type: DatabaseEnum, created_db_name="stock_strategy", data_dir=None) -> None:
+        super().__init__(use_db_type, created_db_name, data_dir)
+
+
+class StockStrategyRepresentativeSmallcapTurnoverDataset(StockStrategyDataset):
+    """
+    Stock strategy dataset with Representative Small-cap Turnover workload.
+    Focuses on high-turnover small cap stocks with momentum and valuation metrics.
+
+    Usage:
+        --db stock_strategy --workload representative_smallcap_turnover
+
+    Database: 'stock_strategy' (shared with all workloads)
+    """
+    train_sql_file = "stock_strategy_representative_smallcap_turnover_train.txt"
+    test_sql_file = "stock_strategy_representative_smallcap_turnover_test.txt"
+
+    def __init__(self, use_db_type: DatabaseEnum, created_db_name="stock_strategy", data_dir=None) -> None:
+        super().__init__(use_db_type, created_db_name, data_dir)
+
+
+class StockStrategyRepresentativeValueQualityDataset(StockStrategyDataset):
+    """
+    Stock strategy dataset with Representative Value + Quality workload.
+    Focuses on value investing combined with quality metrics (EPS, dividend yield).
+
+    Usage:
+        --db stock_strategy --workload representative_value_quality
+
+    Database: 'stock_strategy' (shared with all workloads)
+    """
+    train_sql_file = "stock_strategy_representative_value_quality_train.txt"
+    test_sql_file = "stock_strategy_representative_value_quality_test.txt"
+
+    def __init__(self, use_db_type: DatabaseEnum, created_db_name="stock_strategy", data_dir=None) -> None:
+        super().__init__(use_db_type, created_db_name, data_dir)

@@ -37,7 +37,7 @@ class LeroCardPushHandler(CardPushHandler):
         return best_idx
 
     def acquire_injected_data(self, sql):
-        
+
         # Pull subquery and its cardinality
         self.pilot_data_interactor.pull_subquery_card()
         data: PilotTransData = self.pilot_data_interactor.execute(sql)

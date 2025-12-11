@@ -17,7 +17,10 @@ from pilotscope.Dataset.StockStrategyDataset import (
     StockStrategyDataset,
     StockStrategyValueInvestingDataset,
     StockStrategyMomentumInvestingDataset,
-    StockStrategyMLHybridDataset
+    StockStrategyMLHybridDataset,
+    StockStrategyRepresentativeMomentumDataset,
+    StockStrategyRepresentativeSmallcapTurnoverDataset,
+    StockStrategyRepresentativeValueQualityDataset
 )
 from pilotscope.PilotEnum import DatabaseEnum
 
@@ -44,6 +47,12 @@ def load_training_sql(db):
         return StockStrategyMomentumInvestingDataset(DatabaseEnum.POSTGRESQL).read_train_sql()
     elif "stock_strategy_ml_hybrid" == db.lower():
         return StockStrategyMLHybridDataset(DatabaseEnum.POSTGRESQL).read_train_sql()
+    elif "stock_strategy_representative_momentum" == db.lower():
+        return StockStrategyRepresentativeMomentumDataset(DatabaseEnum.POSTGRESQL).read_train_sql()
+    elif "stock_strategy_representative_smallcap_turnover" == db.lower():
+        return StockStrategyRepresentativeSmallcapTurnoverDataset(DatabaseEnum.POSTGRESQL).read_train_sql()
+    elif "stock_strategy_representative_value_quality" == db.lower():
+        return StockStrategyRepresentativeValueQualityDataset(DatabaseEnum.POSTGRESQL).read_train_sql()
     elif "stock_strategy" == db.lower():
         # Default workload (value_investing)
         return StockStrategyDataset(DatabaseEnum.POSTGRESQL).read_train_sql()
@@ -68,6 +77,12 @@ def load_test_sql(db):
         return StockStrategyMomentumInvestingDataset(DatabaseEnum.POSTGRESQL).read_test_sql()
     elif "stock_strategy_ml_hybrid" == db.lower():
         return StockStrategyMLHybridDataset(DatabaseEnum.POSTGRESQL).read_test_sql()
+    elif "stock_strategy_representative_momentum" == db.lower():
+        return StockStrategyRepresentativeMomentumDataset(DatabaseEnum.POSTGRESQL).read_test_sql()
+    elif "stock_strategy_representative_smallcap_turnover" == db.lower():
+        return StockStrategyRepresentativeSmallcapTurnoverDataset(DatabaseEnum.POSTGRESQL).read_test_sql()
+    elif "stock_strategy_representative_value_quality" == db.lower():
+        return StockStrategyRepresentativeValueQualityDataset(DatabaseEnum.POSTGRESQL).read_test_sql()
     elif "stock_strategy" == db.lower():
         # Default workload (value_investing)
         return StockStrategyDataset(DatabaseEnum.POSTGRESQL).read_test_sql()
@@ -204,7 +219,10 @@ def get_spark_table_name_for_scan_node(node: dict):
     return table
 
 
-# ================== Test Result Management Utils ==================
+# ================== DEPRECATED: Legacy Result Management ==================
+# NOTE: These functions are deprecated and replaced by MLflow.
+# All test results are now logged to MLflow automatically by unified_test.py
+# Keep these for backward compatibility with old scripts only.
 
 def save_test_result(algo_name, db_name, extra_info=None):
     """
